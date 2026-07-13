@@ -1,0 +1,37 @@
+image: nixos/unstable
+arch: x86_64
+# Keep this manifest lean: no image packages are needed for the generated checks.
+# If packages are later required on nixos/unstable, use channel-prefixed names
+# (for example, nixos.git); unprefixed names fail before tasks start.
+secrets:
+  - 731f7e55-4497-4228-8fa4-1657da7d3625 # cachix averagechris-dotfiles -> ~/.ci_secrets/cachix_token
+environment:
+  NIX_CONFIG: |
+    experimental-features = nix-command flakes
+    extra-substituters = https://averagechris-dotfiles.cachix.org
+    extra-trusted-public-keys = averagechris-dotfiles.cachix.org-1:VwJkl5dG1+xGDY5x884mH/kVwwpgwBAdBKIF3BZiia4=
+sources:
+  - https://git.sr.ht/~averagechris/prose
+tasks:
+  - fmt: |
+      cd prose
+      nix run .#ci-fmt
+  - clippy: |
+      cd prose
+      nix run .#ci-clippy
+  - test: |
+      cd prose
+      nix run .#ci-test
+  - package: |
+      cd prose
+      nix build .#prose --print-build-logs
+  - closure-size: |
+      cd prose
+      nix path-info -S ./result
+      nix path-info -rS ./result | sort -k2 -n | tail -n 5
+  - cache-warm: |
+      cd prose
+      if [ ! -f ~/.ci_secrets/cachix_token ]; then echo "no cachix token available; skipping cache warm"; exit 0; fi
+      [ -e ./result ] || { echo "package result missing; skipping cache warm"; exit 0; }
+      CACHIX_AUTH_TOKEN="$(cat ~/.ci_secrets/cachix_token)"; export CACHIX_AUTH_TOKEN
+      nix run --inputs-from . nixpkgs#cachix -- push averagechris-dotfiles ./result

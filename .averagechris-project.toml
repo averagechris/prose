@@ -1,0 +1,17 @@
+# Public project metadata for future averagechris fleet enrollment.
+# This file is informational today; site registry updates are manual.
+[project]
+name = "prose"
+description = "Voice-preserving authoring service for agent-assisted content: deterministic voice packs, drafts, verbs, and approval attestations."
+pages_subdir = "prose"
+srht_repo = "prose"
+artifact_prefix = "prose"
+binaries = ["prose"]
+version_file = "Cargo.toml"
+homepage_tier = "more"
+downloads = true
+tracker = "https://todo.sr.ht/~averagechris/projects"
+tracker_label = "repo:prose"
+
+[pages]
+docs = ["overview.html", "examples.html", "demo.html", "changelog.html"]
