@@ -2,6 +2,24 @@
 
 Use `jj` for version-control actions in this repository.
 
+## What prose is (read this first)
+
+prose is a voice-preserving authoring service for agent-assisted content:
+deterministic, model-free infrastructure serving voice packs, drafts, verbs,
+and approval attestations to agent harnesses. Design docs index:
+`docs/README.md`. Canonical design history: tracker tickets #246 (intention)
+and #247 (architecture; milestone status lives in its comments).
+
+Session essentials:
+
+- **Broker, never brain.** Never add model calls or judgment to prose
+  itself; judgment belongs to attached agent runtimes.
+- **Mechanism vs material.** Voice packs, verbs, and approval tiers are
+  user data; prose ships schemas and process only, including zero built-in
+  verbs.
+- **Sovereignty.** Agents never approve content on the user's behalf;
+  attestations are recorded only when the human actually approved.
+
 ## Development
 
 - Enter the toolchain with `direnv allow` or `nix develop`.
