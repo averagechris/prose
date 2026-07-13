@@ -89,7 +89,7 @@
 
         meta = {
           description = package.description;
-          license = lib.licenses.mit;
+          license = with lib.licenses; [mit asl20];
           mainProgram = "prose";
         };
       };
