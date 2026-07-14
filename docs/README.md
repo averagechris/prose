@@ -6,5 +6,7 @@ history and status: [#246 (intention and non-negotiables)](https://todo.sr.ht/~a
 
 - [design.md](design.md): north star, invariants, architecture shape, and
   milestone map. Read this before designing or building anything.
+- [m1.md](m1.md): M1 library, SQLite schema, strict JSON contracts, CLI, and
+  machine-output reference.
 - `pages/`: static HTML stubs rendered on the fleet site (downloads,
   overview, examples, changelog). Not design docs.

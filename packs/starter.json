@@ -1,0 +1,41 @@
+{
+  "id": "starter",
+  "description": "Starter editing operations; import explicitly and extend with your own voice material.",
+  "contexts": [],
+  "verbs": [
+    {
+      "name": "draft",
+      "description": "Turn supplied intent into a candidate draft.",
+      "family": "draft-from-intent",
+      "instructions": "Express only the supplied intent. Do not add claims.",
+      "context_bindings": [],
+      "constraints": {"length": null, "no_new_claims": true, "preserve_meaning": true}
+    },
+    {
+      "name": "proofread",
+      "description": "Correct mechanical errors without rewriting.",
+      "family": "transform-selection",
+      "instructions": "Correct spelling, grammar, and punctuation while preserving wording and meaning wherever possible.",
+      "context_bindings": [],
+      "constraints": {"length": null, "no_new_claims": true, "preserve_meaning": true}
+    },
+    {
+      "name": "shape",
+      "description": "Restructure supplied material into a coherent candidate.",
+      "family": "transform-selection",
+      "instructions": "Improve structure and flow using only the supplied substance.",
+      "context_bindings": [],
+      "constraints": {"length": null, "no_new_claims": true, "preserve_meaning": true}
+    },
+    {
+      "name": "tighten",
+      "description": "Remove avoidable length from supplied text.",
+      "family": "transform-selection",
+      "instructions": "Remove repetition and unnecessary words without changing meaning.",
+      "context_bindings": [],
+      "constraints": {"length": null, "no_new_claims": true, "preserve_meaning": true}
+    }
+  ],
+  "audience_tiers": [],
+  "surface_mappings": []
+}

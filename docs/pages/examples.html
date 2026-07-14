@@ -16,9 +16,25 @@
       <p class="nav"><a href="https://averagechris.srht.site/">~averagechris</a> / <a href="index.html">prose</a> / examples</p>
 
         <h1>prose examples</h1>
-        <pre><code>prose --help
-prose --json</code></pre>
-        <p>Replace this page with real workflows as the project grows.</p>
+        <p>prose stores user-owned material and approval evidence; it does not
+        call a model or embed built-in verbs. The separate starter data is
+        imported explicitly.</p>
+        <pre><code>prose --json pack import --file packs/starter.json --activate
+prose --json pack create --file personal-pack.json
+prose --json pack use personal
+prose --json context reviews
+prose --json verb tighten
+prose --json surface github-pr
+prose --json draft create --file draft.json
+prose --json draft append review-42 --parent 1 --content-file revised.txt
+prose --json attest --file approvals.json</code></pre>
+        <p>Pack verbs declare a <code>transform-selection</code> or
+        <code>draft-from-intent</code> family, instructions, context bindings,
+        and typed length/no-new-claims/preserve-meaning constraints. Drafts
+        freeze exact pack revisions. Approval files identify the human,
+        harness and session, method, exact draft versions, and per-item
+        exceptions in one atomic bulk event.</p>
+        <p>See <a href="../m1.md">the exact M1 schema and JSON examples</a>.</p>
 
     </body>
     </html>
