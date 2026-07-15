@@ -63,6 +63,17 @@
       mkToolApp system "ci-sort" [(pkgsFor system).cargo (pkgsFor system).cargo-sort] ''
         cargo sort --workspace --check
       '';
+    ciNixFmt = system:
+      mkToolApp system "ci-nix-fmt" [(pkgsFor system).alejandra] ''
+        alejandra -q --check .
+      '';
+    fleetCiTool = system: name: let
+      pkgs = pkgsFor system;
+      program = (fleetApps system).apps.${name}.program;
+    in
+      pkgs.writeShellScriptBin name ''
+        exec ${program} "$@"
+      '';
     nixFormatter = system: let
       pkgs = pkgsFor system;
     in
@@ -97,9 +108,13 @@
       default = app;
       prose = app;
       ci-audit = ciAudit system;
+      ci-clippy = fleetCiTool system "ci-clippy";
       ci-deny = ciDeny system;
+      ci-fmt = fleetCiTool system "ci-fmt";
       ci-machete = ciMachete system;
+      ci-nix-fmt = ciNixFmt system;
       ci-sort = ciSort system;
+      ci-test = fleetCiTool system "ci-test";
       release-artifact = (fleetApps system).releaseArtifact system;
     });
 
@@ -154,7 +169,17 @@
             rustfmt
             sccache
           ]
-          ++ [srht.packages.${system}.srht];
+          ++ [
+            self.packages.${system}.ci-audit
+            self.packages.${system}.ci-clippy
+            self.packages.${system}.ci-deny
+            self.packages.${system}.ci-fmt
+            self.packages.${system}.ci-machete
+            self.packages.${system}.ci-nix-fmt
+            self.packages.${system}.ci-sort
+            self.packages.${system}.ci-test
+            srht.packages.${system}.srht
+          ];
       };
     });
 

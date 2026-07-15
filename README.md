@@ -52,6 +52,7 @@ prose --json attest --file approvals.json
 ```sh
 direnv allow   # or: nix develop
 nix run . -- --help
+jj lint        # inside the dev shell; otherwise: nix develop . -c -- jj lint
 nix run .#ci-fmt
 nix run .#ci-clippy
 nix run .#static-checks

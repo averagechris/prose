@@ -22,7 +22,11 @@ Session essentials:
 
 ## Development
 
-- Enter the toolchain with `direnv allow` or `nix develop`.
+- Assume commands run inside the flake dev shell. Enter it with `direnv allow`
+  or `nix develop` when needed.
+- `jj lint` deliberately calls the dev shell's direct `ci-*` commands to avoid
+  a Nix evaluation per check. Outside the shell, use
+  `nix develop . -c -- jj lint`.
 - Nix formatting uses wrapped `alejandra -q`; run `nix fmt` or `nix fmt -- --check .`.
 - Prefer local checks: `nix run .#static-checks` (fmt + clippy), `nix run .#ci-test`, `nix run .#ci-machete`, `nix run .#ci-sort`, `nix run .#ci-deny`, `nix run .#ci-audit`.
 - `.builds/ci.yml` runs fmt, clippy, test, the package build, closure-size reporting, and a guarded Cachix cache warm on every push.
