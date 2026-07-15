@@ -1,80 +1,90 @@
-const api = globalThis.browser ?? globalThis.chrome;
-let pendingSelection = null;
-let lastDraft = null;
+"use strict";
 
-function surface() {
-  if (location.hostname === "github.com") return "github-pr";
-  if (location.hostname === "linear.app") return "linear";
-  return location.hostname;
+const api = globalThis.browser ?? globalThis.chrome;
+const promiseResponses = typeof globalThis.browser !== "undefined";
+const core = globalThis.ProseContentCore;
+const state = new core.EditorState();
+
+function currentSurface() {
+  return core.detectSurface(location);
 }
 
 function selectionContext() {
+  const surface = currentSurface();
+  if (!surface) return {selection: "", surrounding_context: "", surface: null};
   const active = document.activeElement;
   if (active && (active.tagName === "TEXTAREA" || active.tagName === "INPUT")) {
+    if (core.assistEditor(location, active) !== active) return {selection: "", surrounding_context: "", surface};
     const start = active.selectionStart ?? 0;
     const end = active.selectionEnd ?? start;
-    pendingSelection = {kind: "input", element: active, start, end};
-    return {selection: active.value.slice(start, end), surrounding_context: active.value};
+    return {...state.selectInput(active, start, end), surface};
   }
   const selected = getSelection();
-  if (!selected || selected.rangeCount === 0) return {selection: "", surrounding_context: ""};
-  const range = selected.getRangeAt(0).cloneRange();
-  pendingSelection = {kind: "range", range};
-  const container = range.commonAncestorContainer.parentElement ?? document.body;
-  return {selection: selected.toString(), surrounding_context: container.innerText?.slice(0, 8000) ?? ""};
+  if (!selected || selected.rangeCount === 0) return {selection: "", surrounding_context: "", surface};
+  const range = selected.getRangeAt(0);
+  const node = range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
+    ? range.commonAncestorContainer
+    : range.commonAncestorContainer.parentElement;
+  const candidate = node?.closest?.('[contenteditable="true"]');
+  const editor = core.assistEditor(location, candidate);
+  if (!editor) return {selection: "", surrounding_context: "", surface};
+  return {...state.selectRange(editor, range, selected.toString(), core.editorText(editor)), surface};
 }
 
-function replaceSelection(candidate) {
-  if (!pendingSelection) return;
-  if (pendingSelection.kind === "input" && pendingSelection.element.isConnected) {
-    const {element, start, end} = pendingSelection;
-    element.setRangeText(candidate, start, end, "end");
-    element.dispatchEvent(new InputEvent("input", {bubbles: true, inputType: "insertText", data: candidate}));
-  } else if (pendingSelection.kind === "range") {
-    const range = pendingSelection.range;
-    range.deleteContents();
-    range.insertNode(document.createTextNode(candidate));
-    range.commonAncestorContainer.parentElement?.dispatchEvent(new InputEvent("input", {bubbles: true, inputType: "insertText", data: candidate}));
+api.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message.type === "prose-selection") {
+    return core.respondAsync(promiseResponses, sendResponse, selectionContext);
   }
-  pendingSelection = null;
-}
-
-api.runtime.onMessage.addListener((message) => {
-  if (message.type === "prose-selection") return Promise.resolve({...selectionContext(), surface: surface()});
-  if (message.type === "prose-replace") {
-    replaceSelection(message.candidate);
-    lastDraft = message.draft;
-  }
+  if (message.type === "prose-replace") state.replace(message.candidate, message.draft);
   if (message.type === "prose-error") console.warn(`prose: ${message.message}`);
   return undefined;
 });
 
-function editableText(target) {
-  const form = target.closest?.("form");
-  const root = form ?? target.closest?.("[role=dialog]") ?? document;
-  const editable = root.querySelector?.("textarea, [contenteditable=true]");
-  if (!editable) return "";
-  return "value" in editable ? editable.value : editable.innerText;
-}
-
-function capture(target) {
-  const content = editableText(target).trim();
-  if (!content) return;
-  api.runtime.sendMessage({type: "prose-capture", capture: {
+function sendCapture(editor, source, action) {
+  const surface = currentSurface();
+  if (!surface) return;
+  const capture = state.capture(editor, {
     id: crypto.randomUUID(),
-    surface: surface(),
+    surface,
     url: `${location.origin}${location.pathname}`,
-    content,
-    draft: lastDraft,
-    metadata: {source: "browser-submit-event"},
-  }}).catch(() => undefined);
-  lastDraft = null;
+    source,
+  }, action);
+  if (capture) core.sendOneWay(api, promiseResponses, {type: "prose-capture", capture});
 }
 
-document.addEventListener("submit", (event) => capture(event.target), true);
-document.addEventListener("click", (event) => {
-  const target = event.target.closest?.("button, [role=button]");
-  if (!target) return;
-  const label = `${target.textContent ?? ""} ${target.getAttribute("aria-label") ?? ""}`.toLowerCase();
-  if (/submit|comment|review|reply|create issue|save/.test(label)) capture(target);
+document.addEventListener("submit", (event) => {
+  const editor = core.nativeEditor(location, event.target);
+  if (editor) sendCapture(editor, "browser-native-submit", event);
 }, true);
+
+document.addEventListener("click", (event) => {
+  const editor = core.linearClickEditor(location, event.target);
+  if (editor) sendCapture(editor, "browser-linear-spa-click", event);
+}, true);
+
+// Any user-originated edit permanently breaks the exact candidate-to-draft
+// association, even if the text is later changed back to the candidate.
+// Replacement-generated input fires before EditorState records its new
+// association, so it does not invalidate the replacement itself.
+document.addEventListener("input", (event) => {
+  const target = event.target;
+  const editor = target?.closest?.('[contenteditable="true"]') ?? target;
+  state.invalidate(editor);
+}, true);
+
+const observer = new MutationObserver(() => state.clearDisconnected());
+observer.observe(document, {childList: true, subtree: true});
+
+function navigation() {
+  state.clearNavigation();
+}
+for (const method of ["pushState", "replaceState"]) {
+  const original = history[method];
+  history[method] = function (...args) {
+    const result = original.apply(this, args);
+    navigation();
+    return result;
+  };
+}
+addEventListener("popstate", navigation);
+addEventListener("hashchange", navigation);

@@ -21,28 +21,37 @@ pub struct ProseMcp {
     app: Application,
 }
 
+// rmcp requires every tool input schema to be rooted at a JSON object. The
+// action-bearing application request enums schema as `oneOf` at the root, so
+// these transport adapters flatten the enum into the top-level MCP arguments
+// instead of adding a nested `{ "request": ... }` wrapper.
 #[derive(Debug, Deserialize, JsonSchema)]
 struct PackParams {
+    #[serde(flatten)]
     request: PackRequest,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct VerbParams {
+    #[serde(flatten)]
     request: VerbRequest,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct DraftParams {
+    #[serde(flatten)]
     request: DraftRequest,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct AttestationParams {
+    #[serde(flatten)]
     request: AttestationRequest,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct CaptureParams {
+    #[serde(flatten)]
     request: CaptureRequest,
 }
 
@@ -53,7 +62,7 @@ impl ProseMcp {
     }
 
     #[tool(
-        description = "Create, update, inspect, select, import, export, or tombstone voice packs and their typed items"
+        description = "Create, update, inspect, select, import, export, or tombstone voice packs and inspect provenance for their typed items"
     )]
     fn pack(&self, Parameters(params): Parameters<PackParams>) -> Result<String, McpError> {
         tool_result(self.app.pack(params.request))
@@ -93,7 +102,7 @@ impl ProseMcp {
         tool_result(self.app.attestation(params.request))
     }
 
-    #[tool(description = "Record or inspect immutable browser submit-time captures")]
+    #[tool(description = "Record or inspect immutable submit attempts and confirmed posts")]
     fn capture(&self, Parameters(params): Parameters<CaptureParams>) -> Result<String, McpError> {
         tool_result(self.app.capture(params.request))
     }

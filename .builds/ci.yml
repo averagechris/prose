@@ -25,6 +25,9 @@ tasks:
   - package: |
       cd prose
       nix build .#prose --print-build-logs
+  - browser-extension: |
+      cd prose
+      nix build .#prose-browser-tests .#prose-extension-chrome .#prose-extension-firefox --print-build-logs
   - closure-size: |
       cd prose
       nix path-info -S ./result

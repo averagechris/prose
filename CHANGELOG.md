@@ -23,3 +23,7 @@
   copying voice guidance into static adapters.
 - M3 loopback HTTP service, backend-neutral command transport for assist,
   append-only submit-time captures, and a GitHub/Linear Manifest V3 extension.
+- M4 native approved-draft and external-import provenance for pack items,
+  submit-attempt versus confirmed-post capture evidence, hardened service and
+  command lifecycles, conservative browser adapters, and separate versioned
+  Chrome/Firefox packages.

@@ -1,13 +1,20 @@
 //! Transport-neutral prose operations shared by the CLI and MCP server.
 
 use crate::{
-    AttestationInput, AudienceTier, AuthorKind, CaptureInput, ContextSpec, DraftCreate, Error,
-    PackDocument, Result, Store, SurfaceMapping, VerbSpec,
+    AssistPreparation, AttestationInput, AudienceTier, AuthorKind, CaptureInput, ContextSpec,
+    DraftCreate, DraftTarget, DraftVersion, Error, ItemKind, PackDocument, PreparedAssist, Result,
+    Store, SurfaceMapping, VerbSpec,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
+
+#[derive(Debug, Clone, Serialize)]
+pub struct StoreReadiness {
+    pub ready: bool,
+    pub category: Option<&'static str>,
+}
 
 #[derive(Debug, Clone)]
 pub struct Application {
@@ -23,6 +30,28 @@ impl Application {
 
     pub fn store_path(&self) -> &Path {
         &self.store_path
+    }
+
+    /// Opens and queries the store rather than relying on construction-time state.
+    pub fn store_readiness(&self) -> StoreReadiness {
+        match Store::open(&self.store_path).and_then(|store| store.schema_version()) {
+            Ok(_) => StoreReadiness {
+                ready: true,
+                category: None,
+            },
+            Err(error) => StoreReadiness {
+                ready: false,
+                category: Some(match error {
+                    Error::Sql(_) => "storage-error",
+                    Error::Io(_) => "io-error",
+                    Error::Json(_) => "data-error",
+                    Error::Validation(_)
+                    | Error::NotFound { .. }
+                    | Error::Stale { .. }
+                    | Error::Conflict(_) => "store-error",
+                }),
+            },
+        }
     }
 
     pub fn pack(&self, request: PackRequest) -> Result<Value> {
@@ -46,8 +75,10 @@ impl Application {
                 activate,
             } => {
                 let pack = match expected_revision {
-                    Some(revision) => store.update_pack(&document, revision)?,
-                    None => store.create_pack(&document)?,
+                    Some(revision) => {
+                        store.update_pack_external(&document, revision, "pack-import")?
+                    }
+                    None => store.create_pack_external(&document, "pack-import")?,
                 };
                 if activate {
                     store.use_pack(&document.id)?;
@@ -63,20 +94,73 @@ impl Application {
                 id,
                 document,
                 expected_revision,
-            } => revise_item(
+            } => revise_external_item(
                 &mut store,
-                &pack_id,
+                ExternalItemRevision {
+                    pack_id: &pack_id,
+                    kind,
+                    id: &id,
+                    document: Some(document),
+                    expected: expected_revision,
+                    source_label: None,
+                    source_uri: None,
+                    channel: "item-put",
+                },
+            ),
+            PackRequest::ItemImport {
+                pack_id,
                 kind,
-                &id,
-                Some(document),
+                id,
+                document,
                 expected_revision,
+                source_label,
+                source_uri,
+                channel,
+            } => revise_external_item(
+                &mut store,
+                ExternalItemRevision {
+                    pack_id: &pack_id,
+                    kind,
+                    id: &id,
+                    document: Some(document),
+                    expected: expected_revision,
+                    source_label: source_label.as_deref(),
+                    source_uri: source_uri.as_deref(),
+                    channel: &channel,
+                },
+            ),
+            PackRequest::ItemInstallApprovedDraft {
+                pack_id,
+                kind,
+                id,
+                document,
+                expected_revision,
+                attestation_id,
+                source,
+            } => install_approved_item(
+                &mut store,
+                ApprovedItemInstall {
+                    pack_id: &pack_id,
+                    kind,
+                    id: &id,
+                    document,
+                    expected: expected_revision,
+                    attestation_id: &attestation_id,
+                    source: &source,
+                },
             ),
             PackRequest::ItemDelete {
                 pack_id,
                 kind,
                 id,
                 expected_revision,
-            } => revise_item(&mut store, &pack_id, kind, &id, None, expected_revision),
+            } => delete_item(&mut store, &pack_id, kind, &id, expected_revision),
+            PackRequest::ItemOrigin {
+                pack_id,
+                kind,
+                id,
+                revision,
+            } => item_origin(&store, &pack_id, kind, &id, revision),
         }
     }
 
@@ -84,7 +168,11 @@ impl Application {
         let store = Store::open(&self.store_path)?;
         let (pack_id, pack_revision, context) =
             store.serve_context(&request.name, request.pack.as_deref())?;
-        Ok(json!({"pack_id":pack_id,"pack_revision":pack_revision,"context":context}))
+        let origin =
+            store.item_origin(&pack_id, pack_revision, ItemKind::Context, &context.name)?;
+        Ok(
+            json!({"pack_id":pack_id,"pack_revision":pack_revision,"context":context,"origin":origin}),
+        )
     }
 
     pub fn verb(&self, request: VerbRequest) -> Result<Value> {
@@ -92,11 +180,18 @@ impl Application {
         match request {
             VerbRequest::Get { name, pack } => {
                 let (pack_id, pack_revision, verb) = store.serve_verb(&name, pack.as_deref())?;
-                Ok(json!({"pack_id":pack_id,"pack_revision":pack_revision,"verb":verb}))
+                let origin =
+                    store.item_origin(&pack_id, pack_revision, ItemKind::Verb, &verb.name)?;
+                Ok(
+                    json!({"pack_id":pack_id,"pack_revision":pack_revision,"verb":verb,"origin":origin}),
+                )
             }
             VerbRequest::List { context, pack } => {
                 let items = store.list_verbs(context.as_deref(), pack.as_deref())?.into_iter()
-                    .map(|(pack_id, pack_revision, verb)| json!({"pack_id":pack_id,"pack_revision":pack_revision,"verb":verb})).collect::<Vec<_>>();
+                    .map(|(pack_id, pack_revision, verb)| {
+                        let origin = store.item_origin(&pack_id, pack_revision, ItemKind::Verb, &verb.name)?;
+                        Ok(json!({"pack_id":pack_id,"pack_revision":pack_revision,"verb":verb,"origin":origin}))
+                    }).collect::<Result<Vec<_>>>()?;
                 Ok(json!({"items":items}))
             }
         }
@@ -104,7 +199,36 @@ impl Application {
 
     pub fn surface(&self, request: SurfaceRequest) -> Result<Value> {
         let store = Store::open(&self.store_path)?;
-        to_value(store.serve_surface(&request.name, request.pack.as_deref())?)
+        let resolved = store.serve_surface(&request.name, request.pack.as_deref())?;
+        let surface_origin = store.item_origin(
+            &resolved.pack_id,
+            resolved.pack_revision,
+            ItemKind::Surface,
+            &resolved.surface,
+        )?;
+        let context_origin = store.item_origin(
+            &resolved.pack_id,
+            resolved.pack_revision,
+            ItemKind::Context,
+            &resolved.context.name,
+        )?;
+        let default_audience_tier_origin = store.item_origin(
+            &resolved.pack_id,
+            resolved.pack_revision,
+            ItemKind::Tier,
+            &resolved.default_audience_tier.name,
+        )?;
+        let mut value = serde_json::to_value(resolved)?;
+        let object = value
+            .as_object_mut()
+            .expect("surface resolution serializes as an object");
+        object.insert("surface_origin".into(), to_value(surface_origin)?);
+        object.insert("context_origin".into(), to_value(context_origin)?);
+        object.insert(
+            "default_audience_tier_origin".into(),
+            to_value(default_audience_tier_origin)?,
+        );
+        Ok(value)
     }
 
     pub fn draft(&self, request: DraftRequest) -> Result<Value> {
@@ -124,6 +248,28 @@ impl Application {
             DraftRequest::Get { id, version } => to_value(store.get_draft(&id, version)?),
             DraftRequest::Versions { id } => Ok(json!({"items":store.list_draft_versions(&id)?})),
         }
+    }
+
+    /// Atomically freezes one assist material revision and records the source
+    /// selection before any transport invokes an external backend.
+    pub fn prepare_assist(&self, request: &AssistPreparation) -> Result<PreparedAssist> {
+        Store::open(&self.store_path)?.prepare_assist(request)
+    }
+
+    /// Records an attached agent's result against the exact prepared source.
+    pub fn complete_assist(
+        &self,
+        source: &DraftTarget,
+        candidate: &str,
+        provenance: &Value,
+    ) -> Result<DraftVersion> {
+        Store::open(&self.store_path)?.revise_draft_with(
+            &source.draft_id,
+            source.version,
+            candidate,
+            AuthorKind::Agent,
+            provenance,
+        )
     }
 
     pub fn attestation(&self, request: AttestationRequest) -> Result<Value> {
@@ -214,11 +360,37 @@ pub enum PackRequest {
         document: Value,
         expected_revision: u64,
     },
+    ItemImport {
+        pack_id: String,
+        kind: ItemKind,
+        id: String,
+        document: Value,
+        expected_revision: u64,
+        source_label: Option<String>,
+        source_uri: Option<String>,
+        #[serde(default = "default_import_channel")]
+        channel: String,
+    },
+    ItemInstallApprovedDraft {
+        pack_id: String,
+        kind: ItemKind,
+        id: String,
+        document: Value,
+        expected_revision: u64,
+        attestation_id: String,
+        source: DraftTarget,
+    },
     ItemDelete {
         pack_id: String,
         kind: ItemKind,
         id: String,
         expected_revision: u64,
+    },
+    ItemOrigin {
+        pack_id: String,
+        kind: ItemKind,
+        id: String,
+        revision: Option<u64>,
     },
 }
 
@@ -259,7 +431,6 @@ pub enum DraftRequest {
         id: String,
         parent: u64,
         content: String,
-        #[serde(default)]
         author_kind: AuthorKind,
         #[serde(default = "empty_object")]
         provenance: Value,
@@ -305,16 +476,6 @@ pub struct RenderRequest {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, clap::ValueEnum)]
 #[serde(rename_all = "kebab-case")]
 #[value(rename_all = "kebab-case")]
-pub enum ItemKind {
-    Context,
-    Verb,
-    Surface,
-    Tier,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, clap::ValueEnum)]
-#[serde(rename_all = "kebab-case")]
-#[value(rename_all = "kebab-case")]
 pub enum Host {
     Opencode,
 }
@@ -329,42 +490,159 @@ Posting tools remain independent; the agent composes this workflow.
 Never treat an agent response as human approval.
 "#;
 
-fn revise_item(
-    store: &mut Store,
-    pack_id: &str,
+struct ExternalItemRevision<'a> {
+    pack_id: &'a str,
     kind: ItemKind,
-    id: &str,
+    id: &'a str,
     document: Option<Value>,
     expected: u64,
-) -> Result<Value> {
-    let mut pack = store.get_pack(pack_id, None)?.document;
-    match (kind, document) {
+    source_label: Option<&'a str>,
+    source_uri: Option<&'a str>,
+    channel: &'a str,
+}
+
+fn revise_external_item(store: &mut Store, revision: ExternalItemRevision<'_>) -> Result<Value> {
+    let mut pack = store.get_pack(revision.pack_id, None)?.document;
+    let caller_material = revision.document.clone().unwrap_or(Value::Null);
+    match (revision.kind, revision.document) {
         (ItemKind::Context, Some(value)) => replace(
             &mut pack.contexts,
-            parse_item::<ContextSpec>(value, id, |v| &v.name)?,
+            parse_item::<ContextSpec>(value, revision.id, |v| &v.name)?,
             |v| &v.name,
         ),
         (ItemKind::Verb, Some(value)) => replace(
             &mut pack.verbs,
-            parse_item::<VerbSpec>(value, id, |v| &v.name)?,
+            parse_item::<VerbSpec>(value, revision.id, |v| &v.name)?,
             |v| &v.name,
         ),
         (ItemKind::Surface, Some(value)) => replace(
             &mut pack.surface_mappings,
-            parse_item::<SurfaceMapping>(value, id, |v| &v.surface)?,
+            parse_item::<SurfaceMapping>(value, revision.id, |v| &v.surface)?,
             |v| &v.surface,
         ),
         (ItemKind::Tier, Some(value)) => replace(
             &mut pack.audience_tiers,
-            parse_item::<AudienceTier>(value, id, |v| &v.name)?,
+            parse_item::<AudienceTier>(value, revision.id, |v| &v.name)?,
             |v| &v.name,
         ),
-        (ItemKind::Context, None) => remove(&mut pack.contexts, id, |v| &v.name)?,
-        (ItemKind::Verb, None) => remove(&mut pack.verbs, id, |v| &v.name)?,
-        (ItemKind::Surface, None) => remove(&mut pack.surface_mappings, id, |v| &v.surface)?,
-        (ItemKind::Tier, None) => remove(&mut pack.audience_tiers, id, |v| &v.name)?,
+        (ItemKind::Context, None) => remove(&mut pack.contexts, revision.id, |v| &v.name)?,
+        (ItemKind::Verb, None) => remove(&mut pack.verbs, revision.id, |v| &v.name)?,
+        (ItemKind::Surface, None) => {
+            remove(&mut pack.surface_mappings, revision.id, |v| &v.surface)?
+        }
+        (ItemKind::Tier, None) => remove(&mut pack.audience_tiers, revision.id, |v| &v.name)?,
     }
-    mutation("updated", store.update_pack(&pack, expected)?)
+    mutation(
+        "updated",
+        store.update_pack_item_external(
+            &pack,
+            revision.expected,
+            revision.kind,
+            revision.id,
+            &caller_material,
+            revision.source_label,
+            revision.source_uri,
+            revision.channel,
+        )?,
+    )
+}
+
+struct ApprovedItemInstall<'a> {
+    pack_id: &'a str,
+    kind: ItemKind,
+    id: &'a str,
+    document: Value,
+    expected: u64,
+    attestation_id: &'a str,
+    source: &'a DraftTarget,
+}
+
+fn install_approved_item(store: &mut Store, install: ApprovedItemInstall<'_>) -> Result<Value> {
+    let mut pack = store.get_pack(install.pack_id, None)?.document;
+    match install.kind {
+        ItemKind::Context => {
+            let item = parse_item::<ContextSpec>(install.document, install.id, |v| &v.name)?;
+            replace(&mut pack.contexts, item, |v| &v.name);
+        }
+        ItemKind::Verb => {
+            let item = parse_item::<VerbSpec>(install.document, install.id, |v| &v.name)?;
+            replace(&mut pack.verbs, item, |v| &v.name);
+        }
+        ItemKind::Tier | ItemKind::Surface => {
+            return Err(Error::Validation(
+                "approved-draft installs support only context and verb items".into(),
+            ));
+        }
+    }
+    mutation(
+        "installed",
+        store.update_pack_item_approved(
+            &pack,
+            install.expected,
+            install.kind,
+            install.id,
+            install.attestation_id,
+            install.source,
+        )?,
+    )
+}
+
+fn item_origin(
+    store: &Store,
+    pack_id: &str,
+    kind: ItemKind,
+    id: &str,
+    revision: Option<u64>,
+) -> Result<Value> {
+    let pack = store.get_pack(pack_id, revision)?;
+    let exists = match kind {
+        ItemKind::Context => pack.document.contexts.iter().any(|item| item.name == id),
+        ItemKind::Verb => pack.document.verbs.iter().any(|item| item.name == id),
+        ItemKind::Tier => pack
+            .document
+            .audience_tiers
+            .iter()
+            .any(|item| item.name == id),
+        ItemKind::Surface => pack
+            .document
+            .surface_mappings
+            .iter()
+            .any(|item| item.surface == id),
+    };
+    if !exists {
+        return Err(Error::NotFound {
+            kind: "pack item",
+            id: id.into(),
+        });
+    }
+    let origin = store.item_origin(pack_id, pack.revision, kind, id)?;
+    Ok(json!({
+        "pack_id": pack_id,
+        "pack_revision": pack.revision,
+        "kind": kind,
+        "id": id,
+        "origin": origin,
+    }))
+}
+
+fn delete_item(
+    store: &mut Store,
+    pack_id: &str,
+    kind: ItemKind,
+    id: &str,
+    expected: u64,
+) -> Result<Value> {
+    let mut pack = store.get_pack(pack_id, None)?.document;
+    match kind {
+        ItemKind::Context => remove(&mut pack.contexts, id, |v| &v.name)?,
+        ItemKind::Verb => remove(&mut pack.verbs, id, |v| &v.name)?,
+        ItemKind::Surface => remove(&mut pack.surface_mappings, id, |v| &v.surface)?,
+        ItemKind::Tier => remove(&mut pack.audience_tiers, id, |v| &v.name)?,
+    }
+    mutation(
+        "updated",
+        store.update_pack_item_deleted(&pack, expected, kind, id)?,
+    )
 }
 
 fn parse<T: DeserializeOwned>(value: Value) -> Result<T> {
@@ -408,4 +686,7 @@ fn remove<T>(items: &mut Vec<T>, id: &str, key: impl Fn(&T) -> &String) -> Resul
 }
 fn empty_object() -> Value {
     json!({})
+}
+fn default_import_channel() -> String {
+    "application".into()
 }

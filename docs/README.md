@@ -12,5 +12,9 @@ history and status: [#246 (intention and non-negotiables)](https://todo.sr.ht/~a
   pointer rendering.
 - [m3.md](m3.md): loopback HTTP service, attached-agent command transport,
   immutable captures, and the GitHub/Linear browser extension.
+- [m4.md](m4.md): native pack provenance, capture observations, service and
+  browser hardening, and extension packaging.
+- [m4-transport-spike.md](m4-transport-spike.md): measured command, OpenCode
+  HTTP, and ACP lifecycle/permission comparison.
 - `pages/`: static HTML stubs rendered on the fleet site (downloads,
   overview, examples, changelog). Not design docs.

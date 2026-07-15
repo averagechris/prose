@@ -78,6 +78,38 @@ pub struct SurfaceResolution {
     pub default_audience_tier: AudienceTier,
 }
 
+/// Provenance recorded for a schema-v3 pack-item revision.
+///
+/// Older pack-item revisions can legitimately have no origin.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum PackItemOrigin {
+    ApprovedDraft {
+        attestation_id: String,
+        draft_id: String,
+        draft_version: u64,
+    },
+    ExternalImport {
+        source_label: Option<String>,
+        source_uri: Option<String>,
+        material_sha256: String,
+        channel: String,
+        recorded_at: String,
+    },
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, clap::ValueEnum,
+)]
+#[serde(rename_all = "kebab-case")]
+#[value(rename_all = "kebab-case")]
+pub enum ItemKind {
+    Context,
+    Verb,
+    Surface,
+    Tier,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PackDocument {
@@ -129,7 +161,6 @@ pub struct DraftCreate {
     pub content: String,
     pub context: Option<ContentRef>,
     pub verb: Option<ContentRef>,
-    #[serde(default)]
     pub author_kind: AuthorKind,
     #[serde(default = "empty_object")]
     pub provenance: serde_json::Value,
@@ -174,6 +205,31 @@ pub struct DraftVersion {
 pub struct DraftTarget {
     pub draft_id: String,
     pub version: u64,
+}
+
+/// Transport-neutral input for atomically resolving assist material and
+/// recording the source selection that will be sent to an attached agent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssistPreparation {
+    pub surface: String,
+    pub context: String,
+    pub verb: String,
+    pub pack: Option<String>,
+    pub selection: String,
+    pub surrounding_context: String,
+    pub draft: Option<DraftTarget>,
+}
+
+/// Exact material and source identity frozen by [`Store::prepare_assist`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreparedAssist {
+    pub pack_id: String,
+    pub pack_revision: u64,
+    pub context: RevisionRef,
+    pub context_text: String,
+    pub verb: RevisionRef,
+    pub verb_instructions: String,
+    pub source: DraftTarget,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -239,6 +295,9 @@ pub struct Attestation {
 #[serde(deny_unknown_fields)]
 pub struct CaptureInput {
     pub id: Option<String>,
+    #[serde(default)]
+    pub observation: CaptureObservation,
+    pub parent_id: Option<String>,
     pub surface: String,
     pub url: String,
     pub content: String,
@@ -250,12 +309,22 @@ pub struct CaptureInput {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Capture {
     pub id: String,
+    pub observation: CaptureObservation,
+    pub parent_id: Option<String>,
     pub surface: String,
     pub url: String,
     pub content: String,
     pub draft: Option<DraftTarget>,
     pub metadata: serde_json::Value,
     pub captured_at: String,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum CaptureObservation {
+    #[default]
+    SubmitAttempt,
+    SurfaceConfirmedPost,
 }
 
 fn empty_object() -> serde_json::Value {

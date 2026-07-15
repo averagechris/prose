@@ -104,16 +104,33 @@
           mainProgram = "prose";
         };
       };
-      extension = pkgs.runCommand "prose-extension-${package.version}" {nativeBuildInputs = [pkgs.zip];} ''
-        mkdir -p "$out/unpacked"
-        cp -R ${./extension}/. "$out/unpacked/"
-        chmod -R u+w "$out/unpacked"
-        (cd "$out/unpacked" && zip -qr "$out/prose-extension.zip" .)
+      mkExtension = browser:
+        pkgs.runCommand "prose-extension-${browser}-${package.version}" {nativeBuildInputs = [pkgs.nodejs pkgs.zip];} ''
+          mkdir -p "$out/unpacked"
+          node ${./extension/scripts/build.mjs} ${browser} "$out/unpacked" ${./.}
+          (cd "$out/unpacked" && zip -qr "$out/prose-extension-${browser}.zip" .)
+        '';
+      extensionChrome = mkExtension "chrome";
+      extensionFirefox = mkExtension "firefox";
+      browserTests = pkgs.runCommand "prose-browser-tests-${package.version}" {nativeBuildInputs = [pkgs.nodejs];} ''
+        cp -R ${./.} source
+        chmod -R u+w source
+        cd source
+        node --test extension/tests/*.test.js
+        node --check extension/background.js
+        node --check extension/queue.js
+        node --check extension/content-core.js
+        node --check extension/content.js
+        node --check extension/scripts/build.mjs
+        touch "$out"
       '';
     in {
       default = app;
       prose = app;
-      prose-extension = extension;
+      prose-extension = extensionChrome;
+      prose-extension-chrome = extensionChrome;
+      prose-extension-firefox = extensionFirefox;
+      prose-browser-tests = browserTests;
       ci-audit = ciAudit system;
       ci-clippy = fleetCiTool system "ci-clippy";
       ci-deny = ciDeny system;
@@ -151,7 +168,7 @@
     });
 
     checks = forAllSystems (system: {
-      inherit (self.packages.${system}) prose prose-extension release-artifact;
+      inherit (self.packages.${system}) prose prose-extension-chrome prose-extension-firefox prose-browser-tests release-artifact;
     });
 
     devShells = forAllSystems (system: let
@@ -171,6 +188,7 @@
             direnv
             jujutsu
             nixd
+            nodejs
             rust-analyzer
             rustc
             rustfmt

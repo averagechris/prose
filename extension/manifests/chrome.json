@@ -1,7 +1,6 @@
 {
   "manifest_version": 3,
   "name": "prose",
-  "version": "0.1.0",
   "description": "Route human-facing writing through your local prose service.",
   "permissions": ["alarms", "contextMenus", "storage", "unlimitedStorage"],
   "host_permissions": [
@@ -12,14 +11,8 @@
   "background": {"service_worker": "background.js"},
   "content_scripts": [{
     "matches": ["https://github.com/*", "https://linear.app/*"],
-    "js": ["content.js"],
+    "js": ["content-core.js", "content.js"],
     "run_at": "document_start"
   }],
-  "action": {"default_title": "prose"},
-  "browser_specific_settings": {
-    "gecko": {
-      "id": "prose@averagechris",
-      "strict_min_version": "121.0"
-    }
-  }
+  "action": {"default_title": "prose"}
 }

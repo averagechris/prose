@@ -1,7 +1,7 @@
 use crate::{
     Application, AttestationInput, AttestationRequest, AuthorKind, CaptureInput, CaptureRequest,
-    ContextRequest, DraftCreate, DraftRequest, Host, ItemKind, PackDocument, PackRequest,
-    RenderRequest, Result, Store, SurfaceRequest, VerbRequest,
+    ContextRequest, DraftCreate, DraftRequest, DraftTarget, Host, ItemKind, PackDocument,
+    PackRequest, RenderRequest, Result, Store, SurfaceRequest, VerbRequest,
 };
 use clap::{Args, Parser, Subcommand};
 use serde::de::DeserializeOwned;
@@ -49,7 +49,7 @@ pub enum Command {
         #[command(subcommand)]
         command: AttestationCommand,
     },
-    /// Record and inspect immutable submit-time captures.
+    /// Record and inspect immutable submit attempts and confirmed posts.
     Capture {
         #[command(subcommand)]
         command: CaptureCommand,
@@ -149,6 +149,16 @@ pub enum PackCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum PackItemCommand {
+    /// Inspect one item's provenance at the latest or an exact pack revision.
+    Origin {
+        pack_id: String,
+        #[arg(long)]
+        kind: ItemKind,
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        revision: Option<u64>,
+    },
     Put {
         pack_id: String,
         #[arg(long)]
@@ -159,6 +169,42 @@ pub enum PackItemCommand {
         file: PathBuf,
         #[arg(long, alias = "expected-revision")]
         if_revision: u64,
+    },
+    /// Import one item with optional external source metadata.
+    Import {
+        pack_id: String,
+        #[arg(long)]
+        kind: ItemKind,
+        #[arg(long)]
+        id: String,
+        #[arg(long, default_value = "-")]
+        file: PathBuf,
+        #[arg(long, alias = "expected-revision")]
+        if_revision: u64,
+        #[arg(long)]
+        source_label: Option<String>,
+        #[arg(long)]
+        source_uri: Option<String>,
+        #[arg(long, default_value = "cli")]
+        channel: String,
+    },
+    /// Install context content or verb instructions from an approved draft.
+    InstallApprovedDraft {
+        pack_id: String,
+        #[arg(long)]
+        kind: ItemKind,
+        #[arg(long)]
+        id: String,
+        #[arg(long, default_value = "-")]
+        file: PathBuf,
+        #[arg(long, alias = "expected-revision")]
+        if_revision: u64,
+        #[arg(long)]
+        attestation_id: String,
+        #[arg(long)]
+        draft_id: String,
+        #[arg(long)]
+        draft_version: u64,
     },
     Delete {
         pack_id: String,
@@ -325,6 +371,17 @@ fn execute_pack(app: &Application, command: PackCommand) -> Result<Value> {
 
 fn execute_pack_item(app: &Application, command: PackItemCommand) -> Result<Value> {
     match command {
+        PackItemCommand::Origin {
+            pack_id,
+            kind,
+            id,
+            revision,
+        } => app.pack(PackRequest::ItemOrigin {
+            pack_id,
+            kind,
+            id,
+            revision,
+        }),
         PackItemCommand::Put {
             pack_id,
             kind,
@@ -337,6 +394,46 @@ fn execute_pack_item(app: &Application, command: PackItemCommand) -> Result<Valu
             id,
             document: read_value(&file)?,
             expected_revision: if_revision,
+        }),
+        PackItemCommand::Import {
+            pack_id,
+            kind,
+            id,
+            file,
+            if_revision,
+            source_label,
+            source_uri,
+            channel,
+        } => app.pack(PackRequest::ItemImport {
+            pack_id,
+            kind,
+            id,
+            document: read_value(&file)?,
+            expected_revision: if_revision,
+            source_label,
+            source_uri,
+            channel,
+        }),
+        PackItemCommand::InstallApprovedDraft {
+            pack_id,
+            kind,
+            id,
+            file,
+            if_revision,
+            attestation_id,
+            draft_id,
+            draft_version,
+        } => app.pack(PackRequest::ItemInstallApprovedDraft {
+            pack_id,
+            kind,
+            id,
+            document: read_value(&file)?,
+            expected_revision: if_revision,
+            attestation_id,
+            source: DraftTarget {
+                draft_id,
+                version: draft_version,
+            },
         }),
         PackItemCommand::Delete {
             pack_id,

@@ -1,18 +1,42 @@
+"use strict";
+
+if (!globalThis.ProseQueue && typeof importScripts === "function") importScripts("queue.js");
+if (!globalThis.ProseContentCore && typeof importScripts === "function") importScripts("content-core.js");
+
 const api = globalThis.browser ?? globalThis.chrome;
+const promiseResponses = typeof globalThis.browser !== "undefined";
 const endpoint = "http://127.0.0.1:37673/v1";
 const menuPrefix = "prose-verb:";
-const captureQueueKey = "proseCaptureQueue";
-let captureWork = Promise.resolve();
+const requestTimeoutMs = 10_000;
+
+class HttpError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
 
 async function request(path, body) {
-  const response = await fetch(`${endpoint}/${path}`, {
-    method: body ? "POST" : "GET",
-    headers: body ? {"Content-Type": "application/json"} : {},
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const value = await response.json();
-  if (!response.ok) throw new Error(value.error?.message ?? `prose returned ${response.status}`);
-  return value;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
+  try {
+    const response = await fetch(`${endpoint}/${path}`, {
+      method: body ? "POST" : "GET",
+      headers: body ? {"Content-Type": "application/json"} : {},
+      body: body ? JSON.stringify(body) : undefined,
+      signal: controller.signal,
+    });
+    let value = {};
+    try {
+      value = await response.json();
+    } catch (_) {
+      // Status is sufficient for retry classification; never retain response bodies.
+    }
+    if (!response.ok) throw new HttpError(response.status, value.error?.message ?? `prose returned ${response.status}`);
+    return value;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function refreshMenus() {
@@ -33,36 +57,24 @@ async function refreshMenus() {
   }
 }
 
-async function enqueueCapture(capture) {
-  const stored = await api.storage.local.get(captureQueueKey);
-  const queue = Array.isArray(stored[captureQueueKey]) ? stored[captureQueueKey] : [];
-  queue.push(capture);
-  await api.storage.local.set({[captureQueueKey]: queue});
-}
+const captures = globalThis.ProseQueue.createCaptureManager({
+  storage: api.storage.local,
+  send: (capture) => request("capture", {action: "record", capture}),
+});
 
-async function flushCaptures() {
-  const stored = await api.storage.local.get(captureQueueKey);
-  const queue = Array.isArray(stored[captureQueueKey]) ? stored[captureQueueKey] : [];
-  let sent = 0;
-  try {
-    for (const capture of queue) {
-      await request("capture", {action: "record", capture});
-      sent += 1;
-    }
-  } finally {
-    if (sent > 0) await api.storage.local.set({[captureQueueKey]: queue.slice(sent)});
-  }
-}
-
-api.runtime.onInstalled.addListener(refreshMenus);
+api.runtime.onInstalled.addListener(() => {
+  refreshMenus();
+  captures.flush().catch(() => undefined);
+});
 api.runtime.onStartup.addListener(() => {
   refreshMenus();
-  flushCaptures().catch(() => undefined);
+  captures.flush().catch(() => undefined);
 });
 api.alarms.create("refresh-prose-verbs", {periodInMinutes: 5});
+api.alarms.create("retry-prose-captures", {periodInMinutes: 1});
 api.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === "refresh-prose-verbs") refreshMenus();
-  flushCaptures().catch(() => undefined);
+  if (alarm.name === "retry-prose-captures") captures.flush().catch(() => undefined);
 });
 
 api.contextMenus.onClicked.addListener(async (info, tab) => {
@@ -70,6 +82,7 @@ api.contextMenus.onClicked.addListener(async (info, tab) => {
   const verb = String(info.menuItemId).slice(menuPrefix.length);
   try {
     const page = await api.tabs.sendMessage(tab.id, {type: "prose-selection"});
+    if (!page.surface) throw new Error("unsupported page");
     const mapping = await request("surface", {name: page.surface, pack: null});
     const result = await request("assist", {
       surface: page.surface,
@@ -86,10 +99,11 @@ api.contextMenus.onClicked.addListener(async (info, tab) => {
   }
 });
 
-api.runtime.onMessage.addListener((message) => {
+api.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type !== "prose-capture") return undefined;
-  captureWork = captureWork.then(() => enqueueCapture(message.capture)
-    .then(flushCaptures)
-    .catch(() => undefined));
-  return captureWork;
+  return globalThis.ProseContentCore.respondAsync(
+    promiseResponses,
+    sendResponse,
+    () => captures.capture(message.capture).then(() => ({ok: true})),
+  );
 });

@@ -58,7 +58,7 @@ fn initializes_private_wal_store_and_reopens() {
     let (dir, store) = store();
     assert_eq!(store.journal_mode().unwrap(), "wal");
     assert!(store.foreign_keys_enabled().unwrap());
-    assert_eq!(store.schema_version().unwrap(), 2);
+    assert_eq!(store.schema_version().unwrap(), 3);
     let path = store.path().to_owned();
     drop(store);
     assert!(Store::open(&path).is_ok());
@@ -425,7 +425,7 @@ fn semantic_validation_and_full_pack_round_trip_are_strict() {
 
     let unknown = r#"{"name":"x","description":"x","family":"draft-from-intent","instructions":"x","context_bindings":[],"constraints":{"length":{"unit":"words","min":1,"max":2,"extra":true},"no_new_claims":false,"preserve_meaning":false}}"#;
     assert!(serde_json::from_str::<VerbSpec>(unknown).is_err());
-    let unknown_item = r#"{"human_approved":true,"approved_by":"Chris","via":{"harness":"h","session":"s"},"method":"explicit","audience_tier":{"pack_id":"p","name":"t"},"items":[{"draft_id":"d","version":1,"exceptions":[],"extra":true}]}"#;
+    let unknown_item = r#"{"human_approved":true,"approved_by":"test-approver","via":{"harness":"h","session":"s"},"method":"explicit","audience_tier":{"pack_id":"p","name":"t"},"items":[{"draft_id":"d","version":1,"exceptions":[],"extra":true}]}"#;
     assert!(serde_json::from_str::<AttestationInput>(unknown_item).is_err());
 }
 
@@ -456,7 +456,7 @@ fn missing_draft_errors_name_drafts_and_bulk_failure_is_atomic() {
     ));
     let input = AttestationInput {
         human_approved: true,
-        approved_by: "Chris".into(),
+        approved_by: "test-approver".into(),
         via: ApprovalVia {
             harness: "opencode".into(),
             session: "atomic".into(),
@@ -534,7 +534,7 @@ fn concurrent_first_open_is_safe() {
         })
         .collect::<Vec<_>>();
     for thread in threads {
-        assert_eq!(thread.join().unwrap().unwrap(), 2);
+        assert_eq!(thread.join().unwrap().unwrap(), 3);
     }
 }
 
@@ -575,7 +575,7 @@ fn bulk_attestations_require_human_confirmation_and_exact_versions() {
     }
     let mut input = AttestationInput {
         human_approved: false,
-        approved_by: "Chris".into(),
+        approved_by: "test-approver".into(),
         via: ApprovalVia {
             harness: "opencode".into(),
             session: "session-42".into(),
@@ -607,7 +607,7 @@ fn bulk_attestations_require_human_confirmation_and_exact_versions() {
     assert_eq!(records.len(), 2);
     assert_eq!(records[0].batch_id, records[1].batch_id);
     assert!(records[0].human_approved);
-    assert_eq!(records[0].approved_by, "Chris");
+    assert_eq!(records[0].approved_by, "test-approver");
     assert_eq!(records[0].via, input.via);
     assert_eq!(records[0].method, input.method);
     assert_eq!(records[0].decision, AttestationDecision::Excepted);
@@ -740,7 +740,8 @@ fn cli_has_single_line_json_protocol_file_stdin_override_and_strict_schema() {
 
     let content = dir.path().join("content.txt");
     fs::write(&content, "second version").unwrap();
-    let draft = r#"{"id":"cli-draft","content":"first","context":null,"verb":null}"#;
+    let draft =
+        r#"{"id":"cli-draft","content":"first","context":null,"verb":null,"author_kind":"human"}"#;
     assert!(
         run(
             &["--json", "--store", db.to_str().unwrap(), "draft", "create"],
@@ -787,6 +788,78 @@ fn cli_has_single_line_json_protocol_file_stdin_override_and_strict_schema() {
         serde_json::from_slice::<serde_json::Value>(&isolated.stderr).unwrap()["error"]["code"],
         "invalid_input"
     );
+}
+
+#[test]
+fn cli_records_explicit_capture_observations() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("capture.db");
+    let attempt = r#"{"id":"attempt","observation":"submit-attempt","parent_id":null,"surface":"github-pr","url":"https://github.com/o/r/pull/1","content":"attempted","draft":null,"metadata":{}}"#;
+    let output = run(
+        &[
+            "--json",
+            "--store",
+            db.to_str().unwrap(),
+            "capture",
+            "record",
+        ],
+        Some(attempt),
+    );
+    assert!(output.status.success(), "{output:?}");
+    let body: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(body["item"]["observation"], "submit-attempt");
+
+    let confirmed = r#"{"id":"confirmed","observation":"surface-confirmed-post","parent_id":"attempt","surface":"github-pr","url":"https://github.com/o/r/pull/1?posted=1","content":"exact post","draft":null,"metadata":{}}"#;
+    let output = run(
+        &[
+            "--json",
+            "--store",
+            db.to_str().unwrap(),
+            "capture",
+            "record",
+        ],
+        Some(confirmed),
+    );
+    assert!(output.status.success(), "{output:?}");
+    let body: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(body["item"]["parent_id"], "attempt");
+    assert_eq!(body["item"]["content"], "exact post");
+}
+
+#[test]
+fn cli_inspects_tier_and_surface_origins_at_exact_revision() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("origin.db");
+    Store::open(&db)
+        .unwrap()
+        .create_pack(&pack("mine"))
+        .unwrap();
+    for (kind, id) in [("tier", "team"), ("surface", "github")] {
+        let output = run(
+            &[
+                "--json",
+                "--store",
+                db.to_str().unwrap(),
+                "pack",
+                "item",
+                "origin",
+                "mine",
+                "--kind",
+                kind,
+                "--id",
+                id,
+                "--revision",
+                "1",
+            ],
+            None,
+        );
+        assert!(output.status.success(), "{output:?}");
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(value["pack_revision"], 1);
+        assert_eq!(value["kind"], kind);
+        assert_eq!(value["id"], id);
+        assert_eq!(value["origin"]["kind"], "external-import");
+    }
 }
 
 #[test]

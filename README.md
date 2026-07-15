@@ -74,11 +74,12 @@ the repository or host adapter. See [the M2 reference](docs/m2.md).
 
 ## Browser service
 
-`prose serve` exposes the same application operations on loopback for the
-unpacked Chrome/Firefox extension in `extension/`. Assist uses an optional
-attached-agent command; submit-time capture remains available when that backend
-is absent. `nix build .#prose-extension` produces both an unpacked directory and
-a zip archive. See [the M3 reference](docs/m3.md).
+`prose serve` exposes a narrow loopback adapter over the shared application
+operations needed by the extension in `extension/`. Assist uses an optional
+attached-agent command; submit-attempt capture remains available when that
+backend is absent. Build `.#prose-extension-chrome` or
+`.#prose-extension-firefox` for browser-specific unpacked and zip artifacts.
+See the [M3 reference](docs/m3.md) and [M4 hardening reference](docs/m4.md).
 
 ## Release
 

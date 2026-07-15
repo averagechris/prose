@@ -71,5 +71,8 @@ See #247 for full definitions and status comments.
   review flow.
 - **M3:** supervised `prose serve`, browser extension (assist plus
   submit-time capture on GitHub and Linear), broker transport spike.
+- **M4:** native pack-item provenance, honest capture observations, hardened
+  service/backend lifecycle, conservative browser adapters, and browser-specific
+  packaging.
 - **Later:** auth and phone web app, messaging-agent harness, mining pass,
   flywheel analysis, other users.
