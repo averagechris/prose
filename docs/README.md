@@ -16,5 +16,7 @@ history and status: [#246 (intention and non-negotiables)](https://todo.sr.ht/~a
   browser hardening, and extension packaging.
 - [m4-transport-spike.md](m4-transport-spike.md): measured command, OpenCode
   HTTP, and ACP lifecycle/permission comparison.
+- [post-m4.md](post-m4.md): refined evidence-reader, harness/onboarding,
+  authenticated-remote, phone-client, and privacy-bounded mining architecture.
 - `pages/`: static HTML stubs rendered on the fleet site (downloads,
   overview, examples, changelog). Not design docs.

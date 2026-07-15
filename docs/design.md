@@ -15,7 +15,7 @@ Canonical design history lives in the umbrella tracker:
 - [#246](https://todo.sr.ht/~averagechris/projects/246): intention,
   non-negotiables, audience-keyed approval tiers, first slice.
 - [#247](https://todo.sr.ht/~averagechris/projects/247): solution
-  architecture, milestones M0-M3, spike items. Milestone status is tracked
+  architecture, milestones, and spike items. Milestone status is tracked
   as comments on this ticket.
 
 ## Invariants
@@ -74,5 +74,14 @@ See #247 for full definitions and status comments.
 - **M4:** native pack-item provenance, honest capture observations, hardened
   service/backend lifecycle, conservative browser adapters, and browser-specific
   packaging.
-- **Later:** auth and phone web app, messaging-agent harness, mining pass,
-  flywheel analysis, other users.
+- **M5:** deterministic evidence reader and bounded audit export; no judgment.
+- **M6:** messaging-harness and pack-lifecycle contracts, including onboarding
+  users through empty private stores without built-in material.
+- **M7:** separately configured authenticated remote serve and exact-version
+  phone approval client, after local operational acceptance and threat review.
+- **M8:** privacy-bounded historical refinement that emits candidate drafts and
+  installs only explicitly approved versions.
+
+The detailed dependency order, boundaries, and acceptance criteria live in
+[post-m4.md](post-m4.md). These are refined plans, not authorization for future
+schema migrations or immediate implementation.
