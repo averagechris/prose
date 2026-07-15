@@ -17,3 +17,7 @@
 - Canonical verb families, instructions, context bindings and constraints;
   surface resolution; frozen draft pack revisions; and approval provenance,
   methods, exact item versions, and per-item exceptions.
+- M2 MCP stdio tools with full CLI capability parity through one shared typed
+  application layer.
+- OpenCode pointer-skill rendering that fetches live pack material instead of
+  copying voice guidance into static adapters.

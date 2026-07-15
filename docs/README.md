@@ -8,5 +8,7 @@ history and status: [#246 (intention and non-negotiables)](https://todo.sr.ht/~a
   milestone map. Read this before designing or building anything.
 - [m1.md](m1.md): M1 library, SQLite schema, strict JSON contracts, CLI, and
   machine-output reference.
+- [m2.md](m2.md): shared application operations, MCP stdio tools, and host
+  pointer rendering.
 - `pages/`: static HTML stubs rendered on the fleet site (downloads,
   overview, examples, changelog). Not design docs.

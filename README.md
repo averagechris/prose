@@ -62,6 +62,16 @@ nix run .#ci-test
 Without Nix, the local Rust checks are `cargo fmt -- --check`, `cargo check`,
 and `cargo test`.
 
+## MCP and host adapters
+
+`prose mcp` exposes the same pack, context, verb, surface, draft, attestation,
+and rendering operations as the CLI over MCP stdio. Both transports call one
+typed application layer; neither duplicates storage or approval behavior.
+
+`prose render --host opencode` emits a small pointer that tells the host to
+fetch live material through prose. It does not copy personal voice content into
+the repository or host adapter. See [the M2 reference](docs/m2.md).
+
 ## Release
 
 ```sh

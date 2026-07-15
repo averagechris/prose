@@ -1,7 +1,10 @@
 #![forbid(unsafe_code)]
 
 use clap::Parser;
-use prose::cli::{Cli, execute};
+use prose::{
+    Store,
+    cli::{Cli, Command, execute},
+};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -15,7 +18,8 @@ struct ErrorBody<'a> {
     message: String,
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(error) => {
@@ -33,12 +37,30 @@ fn main() {
             fail_human(message);
         }
     };
+    if matches!(cli.command, Command::Mcp) {
+        let path = match cli
+            .store
+            .clone()
+            .map(Ok)
+            .unwrap_or_else(Store::default_path)
+        {
+            Ok(path) => path,
+            Err(error) => fail_human(error.to_string()),
+        };
+        if let Err(error) = prose::mcp::run(path).await {
+            fail_human(error.to_string());
+        }
+        return;
+    }
     let json = cli.json;
     match execute(cli) {
         Ok(output) if output.json => println!(
             "{}",
             serde_json::to_string(&output.value).expect("output JSON serialization cannot fail")
         ),
+        Ok(output) if output.plain.is_some() => {
+            print!("{}", output.plain.expect("plain output was checked"))
+        }
         Ok(output) => println!(
             "{}",
             serde_json::to_string_pretty(&output.value)

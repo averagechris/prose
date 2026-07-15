@@ -1,9 +1,10 @@
 use crate::{
-    AttestationInput, AudienceTier, AuthorKind, ContextSpec, DraftCreate, Error, PackDocument,
-    Result, Store, SurfaceMapping, VerbSpec,
+    Application, AttestationInput, AttestationRequest, AuthorKind, ContextRequest, DraftCreate,
+    DraftRequest, Host, ItemKind, PackDocument, PackRequest, RenderRequest, Result, Store,
+    SurfaceRequest, VerbRequest,
 };
-use clap::{Args, Parser, Subcommand, ValueEnum};
-use serde::{Serialize, de::DeserializeOwned};
+use clap::{Args, Parser, Subcommand};
+use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -49,6 +50,13 @@ pub enum Command {
     },
     /// Record an immutable human-approval attestation.
     Attest(InputFile),
+    /// Run the Model Context Protocol server over stdio.
+    Mcp,
+    /// Render a small host adapter that points back to live prose tools.
+    Render {
+        #[arg(long, value_enum)]
+        host: Host,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -112,15 +120,6 @@ pub enum PackCommand {
         #[command(subcommand)]
         command: PackItemCommand,
     },
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
-#[value(rename_all = "kebab-case")]
-pub enum ItemKind {
-    Context,
-    Verb,
-    Surface,
-    Tier,
 }
 
 #[derive(Debug, Subcommand)]
@@ -197,134 +196,128 @@ pub enum AttestationCommand {
 pub struct Output {
     pub json: bool,
     pub value: Value,
+    pub plain: Option<String>,
 }
 
 pub fn execute(cli: Cli) -> Result<Output> {
     let json_output = cli.json;
     let path = cli.store.map(Ok).unwrap_or_else(Store::default_path)?;
-    let mut store = Store::open(path)?;
+    let app = Application::new(path);
+    let mut plain = None;
     let value = match cli.command {
-        Command::Pack { command } => execute_pack(&mut store, command)?,
-        Command::Context(args) => {
-            let (pack_id, pack_revision, context) =
-                store.serve_context(&args.name, args.pack.as_deref())?;
-            json!({"pack_id":pack_id,"pack_revision":pack_revision,"context":context})
+        Command::Pack { command } => execute_pack(&app, command)?,
+        Command::Context(args) => app.context(ContextRequest {
+            name: args.name,
+            pack: args.pack,
+        })?,
+        Command::Verb(args) => app.verb(VerbRequest::Get {
+            name: args.name,
+            pack: args.pack,
+        })?,
+        Command::Verbs(args) => app.verb(VerbRequest::List {
+            context: args.context,
+            pack: args.pack,
+        })?,
+        Command::Surface(args) => app.surface(SurfaceRequest {
+            name: args.name,
+            pack: args.pack,
+        })?,
+        Command::Draft { command } => execute_draft(&app, command)?,
+        Command::Attestation { command } => execute_attestation(&app, command)?,
+        Command::Attest(input) => app.attestation(AttestationRequest::Record {
+            attestation: read_json::<AttestationInput>(&input.file)?,
+        })?,
+        Command::Render { host } => {
+            let rendered = app.render(RenderRequest { host })?;
+            plain = rendered
+                .get("content")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            rendered
         }
-        Command::Verb(args) => {
-            let (pack_id, pack_revision, verb) =
-                store.serve_verb(&args.name, args.pack.as_deref())?;
-            json!({"pack_id":pack_id,"pack_revision":pack_revision,"verb":verb})
+        Command::Mcp => {
+            return Err(crate::Error::Conflict(
+                "MCP must be run as a transport".into(),
+            ));
         }
-        Command::Verbs(args) => {
-            let items = store.list_verbs(args.context.as_deref(), args.pack.as_deref())?.into_iter()
-                .map(|(pack_id, pack_revision, verb)| json!({"pack_id":pack_id,"pack_revision":pack_revision,"verb":verb})).collect::<Vec<_>>();
-            json!({"items":items})
-        }
-        Command::Surface(args) => to_value(store.serve_surface(&args.name, args.pack.as_deref())?)?,
-        Command::Draft { command } => execute_draft(&mut store, command)?,
-        Command::Attestation { command } => execute_attestation(&mut store, command)?,
-        Command::Attest(input) => mutation(
-            "recorded",
-            store.attest(&read_json::<AttestationInput>(&input.file)?)?,
-        )?,
     };
     Ok(Output {
         json: json_output,
         value,
+        plain,
     })
 }
 
-fn execute_pack(store: &mut Store, command: PackCommand) -> Result<Value> {
+fn execute_pack(app: &Application, command: PackCommand) -> Result<Value> {
     match command {
-        PackCommand::Create(input) => {
-            mutation("created", store.create_pack(&read_json(&input.file)?)?)
-        }
+        PackCommand::Create(input) => app.pack(PackRequest::Create {
+            document: read_json::<PackDocument>(&input.file)?,
+        }),
         PackCommand::Update {
             expected_revision,
             input,
-        } => mutation(
-            "updated",
-            store.update_pack(&read_json(&input.file)?, expected_revision)?,
-        ),
-        PackCommand::Get { id, revision } => to_value(store.get_pack(&id, revision)?),
-        PackCommand::List => Ok(json!({"items":store.list_packs()?})),
+        } => app.pack(PackRequest::Update {
+            document: read_json::<PackDocument>(&input.file)?,
+            expected_revision,
+        }),
+        PackCommand::Get { id, revision } => app.pack(PackRequest::Get { id, revision }),
+        PackCommand::List => app.pack(PackRequest::List),
         PackCommand::Delete {
             id,
             expected_revision,
-        } => mutation("deleted", store.delete_pack(&id, expected_revision)?),
-        PackCommand::Use { id } => mutation("selected", store.use_pack(&id)?),
+        } => app.pack(PackRequest::Delete {
+            id,
+            expected_revision,
+        }),
+        PackCommand::Use { id } => app.pack(PackRequest::Use { id }),
         PackCommand::Import {
             input,
             expected_revision,
             activate,
-        } => {
-            let document: PackDocument = read_json(&input.file)?;
-            let pack = match expected_revision {
-                Some(revision) => store.update_pack(&document, revision)?,
-                None => store.create_pack(&document)?,
-            };
-            if activate {
-                store.use_pack(&document.id)?;
-            }
-            mutation("imported", pack)
-        }
-        PackCommand::Export { id, revision } => to_value(store.get_pack(&id, revision)?.document),
-        PackCommand::Item { command } => execute_pack_item(store, command),
+        } => app.pack(PackRequest::Import {
+            document: read_json::<PackDocument>(&input.file)?,
+            expected_revision,
+            activate,
+        }),
+        PackCommand::Export { id, revision } => app.pack(PackRequest::Export { id, revision }),
+        PackCommand::Item { command } => execute_pack_item(app, command),
     }
 }
 
-fn execute_pack_item(store: &mut Store, command: PackItemCommand) -> Result<Value> {
-    let (pack_id, kind, id, expected, document) = match command {
+fn execute_pack_item(app: &Application, command: PackItemCommand) -> Result<Value> {
+    match command {
         PackItemCommand::Put {
             pack_id,
             kind,
             id,
             file,
             if_revision,
-        } => (pack_id, kind, id, if_revision, Some(read_text(&file)?)),
+        } => app.pack(PackRequest::ItemPut {
+            pack_id,
+            kind,
+            id,
+            document: read_value(&file)?,
+            expected_revision: if_revision,
+        }),
         PackItemCommand::Delete {
             pack_id,
             kind,
             id,
             if_revision,
-        } => (pack_id, kind, id, if_revision, None),
-    };
-    let mut pack = store.get_pack(&pack_id, None)?.document;
-    match (kind, document) {
-        (ItemKind::Context, Some(json)) => replace(
-            &mut pack.contexts,
-            parse_item::<ContextSpec>(&json, &id, |v| &v.name)?,
-            |v| &v.name,
-        ),
-        (ItemKind::Verb, Some(json)) => replace(
-            &mut pack.verbs,
-            parse_item::<VerbSpec>(&json, &id, |v| &v.name)?,
-            |v| &v.name,
-        ),
-        (ItemKind::Surface, Some(json)) => replace(
-            &mut pack.surface_mappings,
-            parse_item::<SurfaceMapping>(&json, &id, |v| &v.surface)?,
-            |v| &v.surface,
-        ),
-        (ItemKind::Tier, Some(json)) => replace(
-            &mut pack.audience_tiers,
-            parse_item::<AudienceTier>(&json, &id, |v| &v.name)?,
-            |v| &v.name,
-        ),
-        (ItemKind::Context, None) => remove(&mut pack.contexts, &id, |v| &v.name)?,
-        (ItemKind::Verb, None) => remove(&mut pack.verbs, &id, |v| &v.name)?,
-        (ItemKind::Surface, None) => remove(&mut pack.surface_mappings, &id, |v| &v.surface)?,
-        (ItemKind::Tier, None) => remove(&mut pack.audience_tiers, &id, |v| &v.name)?,
+        } => app.pack(PackRequest::ItemDelete {
+            pack_id,
+            kind,
+            id,
+            expected_revision: if_revision,
+        }),
     }
-    mutation("updated", store.update_pack(&pack, expected)?)
 }
 
-fn execute_draft(store: &mut Store, command: DraftCommand) -> Result<Value> {
+fn execute_draft(app: &Application, command: DraftCommand) -> Result<Value> {
     match command {
-        DraftCommand::Create(input) => mutation(
-            "created",
-            store.create_draft(&read_json::<DraftCreate>(&input.file)?)?,
-        ),
+        DraftCommand::Create(input) => app.draft(DraftRequest::Create {
+            draft: read_json::<DraftCreate>(&input.file)?,
+        }),
         DraftCommand::Append {
             id,
             parent,
@@ -336,80 +329,31 @@ fn execute_draft(store: &mut Store, command: DraftCommand) -> Result<Value> {
                 .map(|path| read_json::<Value>(&path))
                 .transpose()?
                 .unwrap_or_else(|| json!({}));
-            mutation(
-                "version-appended",
-                store.revise_draft_with(
-                    &id,
-                    parent,
-                    &read_text(&content_file)?,
-                    author_kind,
-                    &provenance,
-                )?,
-            )
+            app.draft(DraftRequest::Append {
+                id,
+                parent,
+                content: read_text(&content_file)?,
+                author_kind,
+                provenance,
+            })
         }
-        DraftCommand::Get { id, version } => to_value(store.get_draft(&id, version)?),
-        DraftCommand::Versions { id } => Ok(json!({"items":store.list_draft_versions(&id)?})),
+        DraftCommand::Get { id, version } => app.draft(DraftRequest::Get { id, version }),
+        DraftCommand::Versions { id } => app.draft(DraftRequest::Versions { id }),
     }
 }
 
-fn execute_attestation(store: &mut Store, command: AttestationCommand) -> Result<Value> {
+fn execute_attestation(app: &Application, command: AttestationCommand) -> Result<Value> {
     match command {
-        AttestationCommand::Record(input) => mutation(
-            "recorded",
-            store.attest(&read_json::<AttestationInput>(&input.file)?)?,
-        ),
-        AttestationCommand::Show { id } => {
-            let items = store.list_attestations(None, Some(&id))?;
-            if items.is_empty() {
-                return Err(Error::NotFound {
-                    kind: "attestation",
-                    id,
-                });
-            }
-            Ok(json!({"id":id,"items":items}))
-        }
+        AttestationCommand::Record(input) => app.attestation(AttestationRequest::Record {
+            attestation: read_json::<AttestationInput>(&input.file)?,
+        }),
+        AttestationCommand::Show { id } => app.attestation(AttestationRequest::Show { id }),
         AttestationCommand::List { draft, version } => {
-            let mut items = store.list_attestations(draft.as_deref(), None)?;
-            if let Some(version) = version {
-                items.retain(|item| item.draft.version == version);
-            }
-            Ok(json!({"items":items}))
+            app.attestation(AttestationRequest::List { draft, version })
         }
     }
 }
 
-fn mutation(action: &str, item: impl Serialize) -> Result<Value> {
-    Ok(json!({"action":action,"item":item}))
-}
-fn to_value(value: impl Serialize) -> Result<Value> {
-    Ok(serde_json::to_value(value)?)
-}
-fn replace<T>(items: &mut Vec<T>, item: T, key: impl Fn(&T) -> &String) {
-    if let Some(index) = items.iter().position(|old| key(old) == key(&item)) {
-        items[index] = item;
-    } else {
-        items.push(item);
-    }
-}
-fn remove<T>(items: &mut Vec<T>, id: &str, key: impl Fn(&T) -> &String) -> Result<()> {
-    let before = items.len();
-    items.retain(|item| key(item) != id);
-    if before == items.len() {
-        Err(Error::NotFound {
-            kind: "pack item",
-            id: id.into(),
-        })
-    } else {
-        Ok(())
-    }
-}
-fn parse_item<T: DeserializeOwned>(text: &str, id: &str, key: impl Fn(&T) -> &String) -> Result<T> {
-    let item: T = serde_json::from_str(text)?;
-    if key(&item) != id {
-        return Err(Error::Validation(format!("item id does not match `{id}`")));
-    }
-    Ok(item)
-}
 fn read_text(path: &Path) -> Result<String> {
     if path == Path::new("-") {
         let mut value = String::new();
@@ -425,4 +369,7 @@ fn read_json<T: DeserializeOwned>(path: &Path) -> Result<T> {
     let value = T::deserialize(&mut de)?;
     de.end()?;
     Ok(value)
+}
+fn read_value(path: &Path) -> Result<Value> {
+    read_json(path)
 }
