@@ -1,8 +1,8 @@
 //! Model Context Protocol transport for the transport-neutral application API.
 
 use crate::{
-    Application, AttestationRequest, ContextRequest, DraftRequest, PackRequest, RenderRequest,
-    SurfaceRequest, VerbRequest,
+    Application, AttestationRequest, CaptureRequest, ContextRequest, DraftRequest, PackRequest,
+    RenderRequest, SurfaceRequest, VerbRequest,
 };
 use rmcp::{
     ErrorData as McpError, ServerHandler, ServiceExt,
@@ -39,6 +39,11 @@ struct DraftParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 struct AttestationParams {
     request: AttestationRequest,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct CaptureParams {
+    request: CaptureRequest,
 }
 
 #[tool_router]
@@ -86,6 +91,11 @@ impl ProseMcp {
         Parameters(params): Parameters<AttestationParams>,
     ) -> Result<String, McpError> {
         tool_result(self.app.attestation(params.request))
+    }
+
+    #[tool(description = "Record or inspect immutable browser submit-time captures")]
+    fn capture(&self, Parameters(params): Parameters<CaptureParams>) -> Result<String, McpError> {
+        tool_result(self.app.capture(params.request))
     }
 
     #[tool(description = "Render a small host adapter that points back to live prose tools")]

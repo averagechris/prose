@@ -3,6 +3,7 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::Mutex,
     time::Duration,
 };
 
@@ -48,6 +49,8 @@ pub struct Store {
     conn: Connection,
     path: PathBuf,
 }
+
+static OPEN_LOCK: Mutex<()> = Mutex::new(());
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -175,7 +178,22 @@ CREATE TRIGGER IF NOT EXISTS attestation_batch_closed BEFORE INSERT ON attestati
 CREATE TRIGGER IF NOT EXISTS batches_no_update BEFORE UPDATE ON attestation_batches BEGIN SELECT RAISE(ABORT,'immutable table'); END;
 CREATE TRIGGER IF NOT EXISTS batches_no_delete BEFORE DELETE ON attestation_batches BEGIN SELECT RAISE(ABORT,'immutable table'); END;
 "#;
+const SCHEMA_V2: &str = r#"
+CREATE TABLE IF NOT EXISTS capture_events (
+ sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
+ surface TEXT NOT NULL, url TEXT NOT NULL, content TEXT NOT NULL,
+ draft_id TEXT, draft_version INTEGER,
+ metadata_json TEXT NOT NULL CHECK(json_valid(metadata_json) AND json_type(metadata_json)='object'),
+ captured_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+ CHECK((draft_id IS NULL) = (draft_version IS NULL)),
+ FOREIGN KEY(draft_id,draft_version) REFERENCES draft_versions(draft_id,version)
+) STRICT;
+CREATE TRIGGER IF NOT EXISTS captures_no_update BEFORE UPDATE ON capture_events BEGIN SELECT RAISE(ABORT,'immutable table'); END;
+CREATE TRIGGER IF NOT EXISTS captures_no_delete BEFORE DELETE ON capture_events BEGIN SELECT RAISE(ABORT,'immutable table'); END;
+INSERT OR IGNORE INTO schema_migrations(version) VALUES(2);
+"#;
 const APPLICATION_ID: u32 = 0x5052_4f53;
+const SCHEMA_VERSION: u32 = 2;
 
 impl Store {
     pub fn default_path() -> Result<PathBuf> {
@@ -191,6 +209,12 @@ impl Store {
     }
 
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        // SQLite serializes database writes, but first-open schema and WAL
+        // initialization spans multiple pragmas and transactions. Keep those
+        // connection setup steps from racing within this process.
+        let _open_guard = OPEN_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let path = path.as_ref().to_path_buf();
         if fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
             return Err(Error::Validation(
@@ -209,9 +233,9 @@ impl Store {
         conn.busy_timeout(Duration::from_secs(5))?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         let version: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version > 1 {
+        if version > SCHEMA_VERSION {
             return Err(Error::Conflict(format!(
-                "store schema version {version} is newer than supported version 1"
+                "store schema version {version} is newer than supported version {SCHEMA_VERSION}"
             )));
         }
         if version == 0 {
@@ -227,12 +251,24 @@ impl Store {
             }
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             tx.execute_batch(SCHEMA)?;
+            tx.execute_batch(SCHEMA_V2)?;
             tx.pragma_update(None, "application_id", APPLICATION_ID)?;
-            tx.pragma_update(None, "user_version", 1)?;
+            tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             tx.commit()?;
-        } else {
-            verify_schema(&conn)?;
+        } else if version == 1 {
+            let application_id: u32 =
+                conn.pragma_query_value(None, "application_id", |row| row.get(0))?;
+            if application_id != APPLICATION_ID {
+                return Err(Error::Conflict(
+                    "store schema identity is missing or unrecognized".into(),
+                ));
+            }
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            tx.execute_batch(SCHEMA_V2)?;
+            tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+            tx.commit()?;
         }
+        verify_schema(&conn)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         private_sqlite_sidecars(&path)?;
         Ok(Self { conn, path })
@@ -715,6 +751,72 @@ impl Store {
             .collect::<rusqlite::Result<_>>()?)
     }
 
+    pub fn record_capture(&mut self, input: &CaptureInput) -> Result<Capture> {
+        if input.surface.trim().is_empty()
+            || input.url.trim().is_empty()
+            || input.content.trim().is_empty()
+        {
+            return Err(Error::Validation(
+                "capture surface, url, and content must not be empty".into(),
+            ));
+        }
+        if !input.metadata.is_object() {
+            return Err(Error::Validation(
+                "capture metadata must be a JSON object".into(),
+            ));
+        }
+        if let Some(draft) = &input.draft {
+            validate_revision(draft.version, "draft version")?;
+        }
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if let Some(draft) = &input.draft {
+            get_draft_from(&tx, &draft.draft_id, Some(draft.version))?;
+        }
+        let id = input.id.clone().unwrap_or(new_id(&tx)?);
+        if !super_key(&id) {
+            return Err(Error::Validation(
+                "capture id has invalid characters or length".into(),
+            ));
+        }
+        if let Some(existing) = tx
+            .query_row(
+                "SELECT id,surface,url,content,draft_id,draft_version,metadata_json,captured_at FROM capture_events WHERE id=?1",
+                [&id],
+                capture_row,
+            )
+            .optional()?
+        {
+            let same = existing.surface == input.surface
+                && existing.url == input.url
+                && existing.content == input.content
+                && existing.draft == input.draft
+                && existing.metadata == input.metadata;
+            return if same {
+                Ok(existing)
+            } else {
+                Err(Error::Conflict(format!(
+                    "capture `{id}` already exists with different content"
+                )))
+            };
+        }
+        tx.execute("INSERT INTO capture_events(id,surface,url,content,draft_id,draft_version,metadata_json) VALUES(?1,?2,?3,?4,?5,?6,?7)", params![id,input.surface,input.url,input.content,input.draft.as_ref().map(|v|&v.draft_id),input.draft.as_ref().map(|v|v.version),serde_json::to_string(&input.metadata)?])?;
+        tx.commit()?;
+        self.get_capture(&id)
+    }
+
+    pub fn get_capture(&self, id: &str) -> Result<Capture> {
+        self.conn.query_row("SELECT id,surface,url,content,draft_id,draft_version,metadata_json,captured_at FROM capture_events WHERE id=?1",[id],capture_row).optional()?.ok_or_else(||Error::NotFound{kind:"capture",id:id.into()})
+    }
+
+    pub fn list_captures(&self, surface: Option<&str>) -> Result<Vec<Capture>> {
+        let mut stmt=self.conn.prepare("SELECT id,surface,url,content,draft_id,draft_version,metadata_json,captured_at FROM capture_events WHERE (?1 IS NULL OR surface=?1) ORDER BY sequence")?;
+        Ok(stmt
+            .query_map([surface], capture_row)?
+            .collect::<rusqlite::Result<_>>()?)
+    }
+
     fn serve_named_context(
         &self,
         name: &str,
@@ -1087,6 +1189,22 @@ fn draft_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<DraftVersion> {
     })
 }
 
+fn capture_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Capture> {
+    let draft_id: Option<String> = r.get(4)?;
+    let draft_version: Option<u64> = r.get(5)?;
+    Ok(Capture {
+        id: r.get(0)?,
+        surface: r.get(1)?,
+        url: r.get(2)?,
+        content: r.get(3)?,
+        draft: draft_id
+            .zip(draft_version)
+            .map(|(draft_id, version)| DraftTarget { draft_id, version }),
+        metadata: json_column(r, 6)?,
+        captured_at: r.get(7)?,
+    })
+}
+
 fn author_kind_db(value: AuthorKind) -> &'static str {
     match value {
         AuthorKind::Human => "human",
@@ -1235,6 +1353,7 @@ fn verify_schema(conn: &Connection) -> Result<()> {
         "draft_versions",
         "attestation_batches",
         "attestations",
+        "capture_events",
     ] {
         let exists: bool = conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?1)",
@@ -1370,6 +1489,20 @@ fn verify_schema(conn: &Connection) -> Result<()> {
                 "exceptions_json",
             ],
         ),
+        (
+            "capture_events",
+            &[
+                "sequence",
+                "id",
+                "surface",
+                "url",
+                "content",
+                "draft_id",
+                "draft_version",
+                "metadata_json",
+                "captured_at",
+            ],
+        ),
     ] {
         let mut statement = conn.prepare("SELECT name FROM pragma_table_xinfo(?1) ORDER BY cid")?;
         let actual = statement
@@ -1409,6 +1542,8 @@ fn verify_schema(conn: &Connection) -> Result<()> {
         "attestation_batch_closed",
         "batches_no_update",
         "batches_no_delete",
+        "captures_no_update",
+        "captures_no_delete",
     ] {
         let exists: bool = conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='trigger' AND name=?1)",

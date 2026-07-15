@@ -72,6 +72,7 @@ fn mcp_lists_all_transport_neutral_capability_groups() {
             .collect::<Vec<_>>(),
         [
             "attestation",
+            "capture",
             "context",
             "draft",
             "pack",

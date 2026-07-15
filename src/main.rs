@@ -37,7 +37,7 @@ async fn main() {
             fail_human(message);
         }
     };
-    if matches!(cli.command, Command::Mcp) {
+    if matches!(&cli.command, Command::Mcp) {
         let path = match cli
             .store
             .clone()
@@ -48,6 +48,36 @@ async fn main() {
             Err(error) => fail_human(error.to_string()),
         };
         if let Err(error) = prose::mcp::run(path).await {
+            fail_human(error.to_string());
+        }
+        return;
+    }
+    if let Command::Serve {
+        host,
+        port,
+        agent_command,
+        agent_args,
+        agent_timeout_seconds,
+    } = &cli.command
+    {
+        let path = match cli
+            .store
+            .clone()
+            .map(Ok)
+            .unwrap_or_else(Store::default_path)
+        {
+            Ok(path) => path,
+            Err(error) => fail_human(error.to_string()),
+        };
+        let config = prose::server::ServeConfig {
+            store_path: path,
+            host: *host,
+            port: *port,
+            agent_command: agent_command.clone(),
+            agent_args: agent_args.clone(),
+            agent_timeout: std::time::Duration::from_secs(*agent_timeout_seconds),
+        };
+        if let Err(error) = prose::server::run(config).await {
             fail_human(error.to_string());
         }
         return;

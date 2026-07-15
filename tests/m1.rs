@@ -58,7 +58,7 @@ fn initializes_private_wal_store_and_reopens() {
     let (dir, store) = store();
     assert_eq!(store.journal_mode().unwrap(), "wal");
     assert!(store.foreign_keys_enabled().unwrap());
-    assert_eq!(store.schema_version().unwrap(), 1);
+    assert_eq!(store.schema_version().unwrap(), 2);
     let path = store.path().to_owned();
     drop(store);
     assert!(Store::open(&path).is_ok());
@@ -534,7 +534,7 @@ fn concurrent_first_open_is_safe() {
         })
         .collect::<Vec<_>>();
     for thread in threads {
-        assert_eq!(thread.join().unwrap().unwrap(), 1);
+        assert_eq!(thread.join().unwrap().unwrap(), 2);
     }
 }
 

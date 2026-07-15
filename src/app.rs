@@ -1,8 +1,8 @@
 //! Transport-neutral prose operations shared by the CLI and MCP server.
 
 use crate::{
-    AttestationInput, AudienceTier, AuthorKind, ContextSpec, DraftCreate, Error, PackDocument,
-    Result, Store, SurfaceMapping, VerbSpec,
+    AttestationInput, AudienceTier, AuthorKind, CaptureInput, ContextSpec, DraftCreate, Error,
+    PackDocument, Result, Store, SurfaceMapping, VerbSpec,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -152,6 +152,19 @@ impl Application {
         }
     }
 
+    pub fn capture(&self, request: CaptureRequest) -> Result<Value> {
+        let mut store = Store::open(&self.store_path)?;
+        match request {
+            CaptureRequest::Record { capture } => {
+                mutation("recorded", store.record_capture(&capture)?)
+            }
+            CaptureRequest::Get { id } => to_value(store.get_capture(&id)?),
+            CaptureRequest::List { surface } => {
+                Ok(json!({"items":store.list_captures(surface.as_deref())?}))
+            }
+        }
+    }
+
     pub fn render(&self, request: RenderRequest) -> Result<Value> {
         match request.host {
             Host::Opencode => Ok(json!({
@@ -273,6 +286,14 @@ pub enum AttestationRequest {
         draft: Option<String>,
         version: Option<u64>,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "action", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum CaptureRequest {
+    Record { capture: CaptureInput },
+    Get { id: String },
+    List { surface: Option<String> },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

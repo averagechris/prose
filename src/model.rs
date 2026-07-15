@@ -235,6 +235,29 @@ pub struct Attestation {
     pub created_at: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CaptureInput {
+    pub id: Option<String>,
+    pub surface: String,
+    pub url: String,
+    pub content: String,
+    pub draft: Option<DraftTarget>,
+    #[serde(default = "empty_object")]
+    pub metadata: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Capture {
+    pub id: String,
+    pub surface: String,
+    pub url: String,
+    pub content: String,
+    pub draft: Option<DraftTarget>,
+    pub metadata: serde_json::Value,
+    pub captured_at: String,
+}
+
 fn empty_object() -> serde_json::Value {
     serde_json::json!({})
 }

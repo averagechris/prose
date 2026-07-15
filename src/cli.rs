@@ -1,7 +1,7 @@
 use crate::{
-    Application, AttestationInput, AttestationRequest, AuthorKind, ContextRequest, DraftCreate,
-    DraftRequest, Host, ItemKind, PackDocument, PackRequest, RenderRequest, Result, Store,
-    SurfaceRequest, VerbRequest,
+    Application, AttestationInput, AttestationRequest, AuthorKind, CaptureInput, CaptureRequest,
+    ContextRequest, DraftCreate, DraftRequest, Host, ItemKind, PackDocument, PackRequest,
+    RenderRequest, Result, Store, SurfaceRequest, VerbRequest,
 };
 use clap::{Args, Parser, Subcommand};
 use serde::de::DeserializeOwned;
@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 use std::{
     fs,
     io::Read,
+    net::IpAddr,
     path::{Path, PathBuf},
 };
 
@@ -48,10 +49,34 @@ pub enum Command {
         #[command(subcommand)]
         command: AttestationCommand,
     },
+    /// Record and inspect immutable submit-time captures.
+    Capture {
+        #[command(subcommand)]
+        command: CaptureCommand,
+    },
     /// Record an immutable human-approval attestation.
     Attest(InputFile),
     /// Run the Model Context Protocol server over stdio.
     Mcp,
+    /// Serve the localhost HTTP API for browser clients.
+    Serve {
+        #[arg(long, default_value = "127.0.0.1")]
+        host: IpAddr,
+        #[arg(long, default_value_t = 37_673)]
+        port: u16,
+        /// Attached agent executable. Assist is unavailable when omitted.
+        #[arg(long, env = "PROSE_AGENT_COMMAND")]
+        agent_command: Option<String>,
+        /// Argument passed to the attached agent before the assembled prompt.
+        #[arg(
+            long = "agent-arg",
+            env = "PROSE_AGENT_ARGS",
+            value_delimiter = '\u{1f}'
+        )]
+        agent_args: Vec<String>,
+        #[arg(long, default_value_t = 60)]
+        agent_timeout_seconds: u64,
+    },
     /// Render a small host adapter that points back to live prose tools.
     Render {
         #[arg(long, value_enum)]
@@ -193,6 +218,19 @@ pub enum AttestationCommand {
     },
 }
 
+#[derive(Debug, Subcommand)]
+pub enum CaptureCommand {
+    Record(InputFile),
+    #[command(alias = "show")]
+    Get {
+        id: String,
+    },
+    List {
+        #[arg(long)]
+        surface: Option<String>,
+    },
+}
+
 pub struct Output {
     pub json: bool,
     pub value: Value,
@@ -224,6 +262,7 @@ pub fn execute(cli: Cli) -> Result<Output> {
         })?,
         Command::Draft { command } => execute_draft(&app, command)?,
         Command::Attestation { command } => execute_attestation(&app, command)?,
+        Command::Capture { command } => execute_capture(&app, command)?,
         Command::Attest(input) => app.attestation(AttestationRequest::Record {
             attestation: read_json::<AttestationInput>(&input.file)?,
         })?,
@@ -235,9 +274,9 @@ pub fn execute(cli: Cli) -> Result<Output> {
                 .map(str::to_owned);
             rendered
         }
-        Command::Mcp => {
+        Command::Mcp | Command::Serve { .. } => {
             return Err(crate::Error::Conflict(
-                "MCP must be run as a transport".into(),
+                "server commands must be run as transports".into(),
             ));
         }
     };
@@ -351,6 +390,16 @@ fn execute_attestation(app: &Application, command: AttestationCommand) -> Result
         AttestationCommand::List { draft, version } => {
             app.attestation(AttestationRequest::List { draft, version })
         }
+    }
+}
+
+fn execute_capture(app: &Application, command: CaptureCommand) -> Result<Value> {
+    match command {
+        CaptureCommand::Record(input) => app.capture(CaptureRequest::Record {
+            capture: read_json::<CaptureInput>(&input.file)?,
+        }),
+        CaptureCommand::Get { id } => app.capture(CaptureRequest::Get { id }),
+        CaptureCommand::List { surface } => app.capture(CaptureRequest::List { surface }),
     }
 }
 

@@ -21,3 +21,5 @@
   application layer.
 - OpenCode pointer-skill rendering that fetches live pack material instead of
   copying voice guidance into static adapters.
+- M3 loopback HTTP service, backend-neutral command transport for assist,
+  append-only submit-time captures, and a GitHub/Linear Manifest V3 extension.

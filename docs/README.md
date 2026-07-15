@@ -10,5 +10,7 @@ history and status: [#246 (intention and non-negotiables)](https://todo.sr.ht/~a
   machine-output reference.
 - [m2.md](m2.md): shared application operations, MCP stdio tools, and host
   pointer rendering.
+- [m3.md](m3.md): loopback HTTP service, attached-agent command transport,
+  immutable captures, and the GitHub/Linear browser extension.
 - `pages/`: static HTML stubs rendered on the fleet site (downloads,
   overview, examples, changelog). Not design docs.

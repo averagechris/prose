@@ -65,12 +65,20 @@ and `cargo test`.
 ## MCP and host adapters
 
 `prose mcp` exposes the same pack, context, verb, surface, draft, attestation,
-and rendering operations as the CLI over MCP stdio. Both transports call one
+capture, and rendering operations as the CLI over MCP stdio. Both transports call one
 typed application layer; neither duplicates storage or approval behavior.
 
 `prose render --host opencode` emits a small pointer that tells the host to
 fetch live material through prose. It does not copy personal voice content into
 the repository or host adapter. See [the M2 reference](docs/m2.md).
+
+## Browser service
+
+`prose serve` exposes the same application operations on loopback for the
+unpacked Chrome/Firefox extension in `extension/`. Assist uses an optional
+attached-agent command; submit-time capture remains available when that backend
+is absent. `nix build .#prose-extension` produces both an unpacked directory and
+a zip archive. See [the M3 reference](docs/m3.md).
 
 ## Release
 

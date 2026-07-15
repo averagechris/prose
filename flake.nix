@@ -104,9 +104,16 @@
           mainProgram = "prose";
         };
       };
+      extension = pkgs.runCommand "prose-extension-${package.version}" {nativeBuildInputs = [pkgs.zip];} ''
+        mkdir -p "$out/unpacked"
+        cp -R ${./extension}/. "$out/unpacked/"
+        chmod -R u+w "$out/unpacked"
+        (cd "$out/unpacked" && zip -qr "$out/prose-extension.zip" .)
+      '';
     in {
       default = app;
       prose = app;
+      prose-extension = extension;
       ci-audit = ciAudit system;
       ci-clippy = fleetCiTool system "ci-clippy";
       ci-deny = ciDeny system;
@@ -144,7 +151,7 @@
     });
 
     checks = forAllSystems (system: {
-      inherit (self.packages.${system}) prose release-artifact;
+      inherit (self.packages.${system}) prose prose-extension release-artifact;
     });
 
     devShells = forAllSystems (system: let
