@@ -191,6 +191,13 @@ impl Store {
     }
 
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        Self::open_with_initialization_hook(path, || {})
+    }
+
+    fn open_with_initialization_hook(
+        path: impl AsRef<Path>,
+        before_initialization: impl FnOnce(),
+    ) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
         if fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
             return Err(Error::Validation(
@@ -211,14 +218,18 @@ impl Store {
         // connection busy timeout, so retry it during concurrent first opens.
         enable_wal(&conn)?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
-        let version: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
+        // Keep the schema decision under the same write reservation as schema
+        // creation so concurrent first opens cannot both choose initialization.
+        before_initialization();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let version: u32 = tx.pragma_query_value(None, "user_version", |row| row.get(0))?;
         if version > 1 {
             return Err(Error::Conflict(format!(
                 "store schema version {version} is newer than supported version 1"
             )));
         }
         if version == 0 {
-            let objects: u64 = conn.query_row(
+            let objects: u64 = tx.query_row(
                 "SELECT count(*) FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'",
                 [],
                 |row| row.get(0),
@@ -228,14 +239,13 @@ impl Store {
                     "store has application objects but no recognized schema version".into(),
                 ));
             }
-            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             tx.execute_batch(SCHEMA)?;
             tx.pragma_update(None, "application_id", APPLICATION_ID)?;
             tx.pragma_update(None, "user_version", 1)?;
-            tx.commit()?;
         } else {
-            verify_schema(&conn)?;
+            verify_schema(&tx)?;
         }
+        tx.commit()?;
         private_sqlite_sidecars(&path)?;
         Ok(Self { conn, path })
     }
@@ -1569,4 +1579,35 @@ fn private_file(path: &Path) -> std::io::Result<()> {
 #[cfg(not(unix))]
 fn private_file(_: &Path) -> std::io::Result<()> {
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Store;
+    use std::sync::{Arc, Barrier};
+
+    #[test]
+    fn concurrent_first_opens_serialize_schema_decision_and_creation() {
+        const CALLERS: usize = 8;
+        let dir = tempfile::tempdir().unwrap();
+        let path = Arc::new(dir.path().join("shared/prose.db"));
+        let before_initialization = Arc::new(Barrier::new(CALLERS));
+
+        let callers = (0..CALLERS)
+            .map(|_| {
+                let path = Arc::clone(&path);
+                let before_initialization = Arc::clone(&before_initialization);
+                std::thread::spawn(move || {
+                    Store::open_with_initialization_hook(path.as_path(), || {
+                        before_initialization.wait();
+                    })
+                    .and_then(|store| store.schema_version())
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for caller in callers {
+            assert_eq!(caller.join().unwrap().unwrap(), 1);
+        }
+    }
 }

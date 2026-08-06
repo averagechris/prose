@@ -1,6 +1,6 @@
 [package]
 name = "prose"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Voice-preserving authoring service for agent-assisted content: deterministic voice packs, drafts, verbs, and approval attestations."
 authors = ["Christopher Cummings"]

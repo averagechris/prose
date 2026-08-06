@@ -69,5 +69,5 @@ tasks:
       EOF
       srht builds submit "$manifest" --secrets --note "site refresh: prose $tag"
 artifacts:
-  - artifacts/prose-v0.1.0-x86_64-linux.tar.gz
-  - artifacts/prose-v0.1.0-x86_64-linux.tar.gz.sha256
+  - artifacts/prose-v0.1.1-x86_64-linux.tar.gz
+  - artifacts/prose-v0.1.1-x86_64-linux.tar.gz.sha256

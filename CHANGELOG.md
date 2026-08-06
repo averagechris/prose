@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## v0.1.1 - 2026-08-06
+
+### Fixed
+
+- Serialized schema inspection and creation so concurrent first-time store opens
+  cannot race and fail after both callers decide to initialize the database.
+
 ## v0.1.0 - 2026-08-05
 
 ### Added

@@ -518,26 +518,6 @@ fn independent_connections_resolve_competing_writes_optimistically() {
     assert_eq!(second.get_draft("draft", None).unwrap().content, "two");
 }
 
-#[test]
-fn concurrent_first_open_is_safe() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = std::sync::Arc::new(dir.path().join("shared/prose.db"));
-    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
-    let threads = (0..2)
-        .map(|_| {
-            let path = path.clone();
-            let barrier = barrier.clone();
-            std::thread::spawn(move || {
-                barrier.wait();
-                Store::open(path.as_path()).map(|store| store.schema_version().unwrap())
-            })
-        })
-        .collect::<Vec<_>>();
-    for thread in threads {
-        assert_eq!(thread.join().unwrap().unwrap(), 1);
-    }
-}
-
 #[cfg(unix)]
 #[test]
 fn privacy_rejects_symbolic_and_hard_linked_store_paths() {
