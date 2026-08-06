@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.1.0 - 2026-08-05
+
 ### Added
 
 - Initial project scaffold.
@@ -17,3 +19,12 @@
 - Canonical verb families, instructions, context bindings and constraints;
   surface resolution; frozen draft pack revisions; and approval provenance,
   methods, exact item versions, and per-item exceptions.
+
+### Changed
+
+- Updated compatible Rust dependencies and the pinned Nix toolchain, fleet,
+  and SourceHut release tooling.
+
+### Fixed
+
+- Made concurrent first-time store opens reliably negotiate SQLite WAL mode.

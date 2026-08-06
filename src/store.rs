@@ -207,6 +207,9 @@ impl Store {
         let mut conn = Connection::open(&path)?;
         private_file(&path)?;
         conn.busy_timeout(Duration::from_secs(5))?;
+        // SQLite's journal-mode pragma may return BUSY without honoring the
+        // connection busy timeout, so retry it during concurrent first opens.
+        enable_wal(&conn)?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         let version: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
         if version > 1 {
@@ -233,7 +236,6 @@ impl Store {
         } else {
             verify_schema(&conn)?;
         }
-        conn.pragma_update(None, "journal_mode", "WAL")?;
         private_sqlite_sidecars(&path)?;
         Ok(Self { conn, path })
     }
@@ -756,6 +758,24 @@ impl Store {
             .collect::<rusqlite::Result<Vec<_>>>()?;
         one_named(rows, "verb", name)
     }
+}
+
+fn enable_wal(conn: &Connection) -> Result<()> {
+    for attempt in 0..50 {
+        match conn.pragma_update(None, "journal_mode", "WAL") {
+            Ok(()) => return Ok(()),
+            Err(rusqlite::Error::SqliteFailure(error, _))
+                if matches!(
+                    error.code,
+                    rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+                ) && attempt < 49 =>
+            {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    unreachable!("WAL retry loop returns on its final attempt")
 }
 
 fn active_pack_revision(conn: &Connection, id: &str) -> Result<u64> {
