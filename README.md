@@ -64,11 +64,15 @@ and `cargo test`.
 ## Release
 
 ```sh
-nix run .#release -- --version X.Y.Z --submit-linux-build
+nix run .#release -- --version X.Y.Z --check
+nix run .#release -- --version X.Y.Z
 ```
 
-The shared release interface comes from
-`git+https://git.sr.ht/~averagechris/averagechris.srht.site#lib.fleet.presets.rust`.
+The SHA-pinned Fleet GitHub backend publishes the prepared `main` commit and
+annotated tag atomically. GitHub Actions builds two read-only artifact bundles;
+an operator must verify and publish the GitHub Release by following
+[the release runbook](docs/release.md). Prose has no website or Pages release
+integration.
 
 ## Issues
 

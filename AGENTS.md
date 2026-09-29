@@ -29,19 +29,24 @@ Session essentials:
 
 ## Release workflow
 
-This repo uses the standard averagechris fleet interface:
+When Chris says "ship a new version", run exactly:
 
 ```sh
-nix run .#prepare-release -- --version X.Y.Z
-nix run .#release-tag
-nix build .#release-artifact
-nix run .#static-checks
-nix run .#release -- --version X.Y.Z --submit-linux-build
+nix run .#release -- --version X.Y.Z --check
+nix run .#release -- --version X.Y.Z
 ```
 
-`.builds/ci.yml` runs automatically on every push and warms the
-averagechris-dotfiles Cachix cache when the CI secret is available.
-`builds/release-linux-x86_64.yml` is explicit-submit only; do not move it to `.builds/`.
+Run both from an empty `@` whose parent, local `main`, and `main@origin` agree.
+The SHA-pinned Fleet GitHub backend prepares and validates the release tree,
+then atomically publishes leased `main` and its annotated tag. The read-only
+workflow builds macOS arm64 and Linux x86_64 artifacts. Follow
+`docs/release.md` to verify its six files and manually publish four GitHub
+Release assets. No app or workflow publishes assets automatically. Prose is
+not registered with the Fleet website and has no Pages project route.
+
+`builds/release-linux-x86_64.yml` and existing SourceHut tags and assets are
+archival. Never submit that manifest for a new release, dual-publish a future
+tag, or create a tag merely to test release automation.
 
 ## Issue tracking
 
@@ -51,3 +56,5 @@ https://todo.sr.ht/~averagechris/projects
 Use the `repo:prose` label for this repository. The label follows the fleet
 convention `repo:<fleet-name>` and is intentionally separate from artifact,
 binary, or SourceHut repository aliases.
+
+<!-- Last audited: 2026-09-29 | moved future releases to manual GitHub publication -->

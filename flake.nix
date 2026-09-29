@@ -8,15 +8,13 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    fleet.url = "git+https://git.sr.ht/~averagechris/averagechris.srht.site";
-    srht.url = "git+https://git.sr.ht/~averagechris/srht";
+    fleet.url = "github:averagechris/fleet/e31a02573d79dfeb2496fec6c21cf74a0ece4d79";
   };
 
   outputs = {
     self,
     nixpkgs,
     fleet,
-    srht,
   }: let
     systems = [
       "aarch64-darwin"
@@ -40,6 +38,8 @@
         versionMode = "package";
         versionFile = "Cargo.toml";
         lockPackages = ["prose"];
+        releaseBackend = "github";
+        releaseValidationApps = ["release-contract"];
       };
     mkToolApp = system: name: runtimeInputs: text: let
       pkgs = pkgsFor system;
@@ -75,6 +75,25 @@
           fi
 
           exec alejandra -q "$@"
+        '';
+      };
+    releaseContract = system: let
+      pkgs = pkgsFor system;
+    in
+      pkgs.writeShellApplication {
+        name = "release-contract";
+        runtimeInputs = [pkgs.gnugrep];
+        text = ''
+          help="$(${(fleetApps system).apps.release.program} --help)"
+          grep -Fq -- 'release --version X.Y.Z [--check] [--allow-downgrade]' <<<"$help"
+          grep -Fq -- '--check  nonmutating ref/version preflight only; does not run validation or build artifacts' <<<"$help"
+          grep -Fq 'nix run .#release -- --version X.Y.Z --check' README.md
+          grep -Fq 'nix run .#release -- --version X.Y.Z' README.md
+          if grep -Eq -- '--(submit-linux-build|skip-(validate|tag|artifact|pages)|publish-pages)' <<<"$help" README.md AGENTS.md docs/release.md; then
+            printf 'release help or documentation exposes an obsolete release flag\n' >&2
+            exit 1
+          fi
+          grep -Fq 'No website or Pages integration is configured for prose.' docs/release.md
         '';
       };
   in {
@@ -125,36 +144,39 @@
         type = "app";
         program = "${self.packages.${system}.ci-sort}/bin/ci-sort";
       };
+      release-contract = {
+        type = "app";
+        program = "${releaseContract system}/bin/release-contract";
+      };
       inherit ((fleetApps system).apps) prepare-release release-tag release ci-fmt ci-clippy static-checks ci-test;
     });
 
     checks = forAllSystems (system: {
       inherit (self.packages.${system}) prose release-artifact;
+      release-contract = releaseContract system;
     });
 
     devShells = forAllSystems (system: let
       pkgs = pkgsFor system;
     in {
       default = pkgs.mkShell {
-        packages = with pkgs;
-          [
-            alejandra
-            cargo
-            cargo-audit
-            cargo-deny
-            cargo-machete
-            cargo-outdated
-            cargo-sort
-            clippy
-            direnv
-            jujutsu
-            nixd
-            rust-analyzer
-            rustc
-            rustfmt
-            sccache
-          ]
-          ++ [srht.packages.${system}.srht];
+        packages = with pkgs; [
+          alejandra
+          cargo
+          cargo-audit
+          cargo-deny
+          cargo-machete
+          cargo-outdated
+          cargo-sort
+          clippy
+          direnv
+          jujutsu
+          nixd
+          rust-analyzer
+          rustc
+          rustfmt
+          sccache
+        ];
       };
     });
 
